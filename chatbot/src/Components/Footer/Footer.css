@@ -32,15 +32,14 @@
 }
 .footer-line hr{
     background-color: black;
-    /* margin-top: 50px; */
-    /* border: 1px solid aqua; */
+
 }
 
 
 .copyright{
     margin-bottom: 0;
     padding:20px 0px 20px 0px;
-    /* text-align:center; */
+
     position: absolute;
     left:42%;
 }
