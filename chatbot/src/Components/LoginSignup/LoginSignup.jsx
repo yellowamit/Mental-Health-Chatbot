@@ -1,7 +1,9 @@
 import React, { useState } from 'react'
+import { useNavigate } from 'react-router-dom';
 import './LoginSignup.css'
 function LoginSignup() {
   const [state,setState]=useState("Signup");
+  const navigate = useNavigate();
 
   
   const [formData,setFormData]=useState({
@@ -46,7 +48,8 @@ function LoginSignup() {
     if(responsedata && responsedata.success){
       localStorage.setItem('auth-token',responsedata.token);
       console.log("Logged in");
-      window.location.replace('/home');
+      // window.location.replace('/home');
+      navigate('/home');
     }
     else {
         alert(responsedata?.error || responsedata?.errors || "Login Failed");
@@ -88,7 +91,8 @@ function LoginSignup() {
     if(responsedata && responsedata.success){
       localStorage.setItem('auth-token',responsedata.token);
       console.log("Signed up");
-      window.location.replace('/home');
+      // window.location.replace('/home');
+      navigate('/home');
     }
     else {
         // Backend sometimes returns 'errors' string instead of 'error'
