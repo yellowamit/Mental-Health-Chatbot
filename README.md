@@ -1,72 +1,99 @@
+# Mental Health Chatbot - MERN Stack
 
-# Mental Health Chatbot
+A MERN stack (MongoDB, Express.js, React, Node.js) web application designed to provide mental health support through an AI-powered chatbot. It features user authentication, a supportive bot interface, and resources for mental well-being.
 
-### Description
-The Mental Health Chatbot is a MERN Stack application designed to assist users in managing their mental health. Users can sign up, log in, and interact with the chatbot to receive mental health support and book therapy sessions at available slots. This project was developed for the university wellness center, offering a platform for students to seek help and engage with professional therapists. The chatbot leverages modern web technologies to provide a responsive and helpful mental health support system.
+## 🚀 Features
 
-### Features
-- **User Authentication**: Sign up and login functionality to ensure secure access.
-- **Chatbot Interaction**: Users can converse with a chatbot for mental health guidance and initial support.
-- **Therapy Booking**: Users can book therapy sessions at available time slots with qualified therapists.
-- **Admin Panel**: Admins can manage available therapy slots, monitor user interactions, and ensure quality control.
-- **Responsive Design**: Works across devices for seamless user experience.
-- **Data Analytics Potential**: Tracks user interactions and can provide insights into mental health trends.
+*   **AI Chatbot**: Powered by Google's Gemini API for empathetic and helpful conversations.
+*   **User Authentication**: Secure Sign Up and Login functionality using JWT (JSON Web Tokens).
+*   **Responsive Design**: A beautiful and accessible user interface built with React.
+*   **Voice Interaction**: Supports speech-to-text for easier communication (where supported).
+*   **Booking System**: (Simulated) functionality to book sessions or appointments.
 
-### Technologies Used
-- **MongoDB**: For storing user data and session information.
-- **Express.js**: Backend framework handling API requests.
-- **React.js**: Frontend framework for the user interface and chatbot interaction.
-- **Node.js**: Server-side environment.
-- **Firebase Authentication**: For secure user sign-up and login.
+## 🛠️ Tech Stack
 
-### Installation Instructions
-1. Clone the repository:
+*   **Frontend**: React.js, React Router, CSS
+*   **Backend**: Node.js, Express.js
+*   **Database**: MongoDB
+*   **AI Model**: Google Gemini Pro (via `@google/generative-ai`)
+*   **Authentication**: JSON Web Token (JWT)
+
+## 📦 Installation & Setup
+
+### Prerequisites
+
+*   Node.js (v14 or higher)
+*   MongoDB Account (Atlas)
+*   Google Cloud Project with Gemini API Key
+
+### 1. Clone the Repository
+
+```bash
+git clone https://github.com/yourusername/mental-health-chatbot.git
+cd mental-health-chatbot
+```
+
+### 2. Backend Setup
+
+1.  Navigate to the `Backend` directory:
     ```bash
-    git clone https://github.com/your-username/mental-health-chatbot.git
+    cd Backend
     ```
-2. Navigate to the project directory:
+2.  Install dependencies:
     ```bash
-    cd mental-health-chatbot
-    ```
-3. Install dependencies for both client and server:
-    ```bash
-    cd client
     npm install
-    cd ../server
+    ```
+3.  Create a `.env` file in the `Backend` directory and add your credentials (see `.env.example`):
+    ```env
+    MONGO_URI=mongodb+srv://<username>:<password>@cluster0.example.mongodb.net/healthbot
+    JWT_SECRET=your_super_secret_jwt_key
+    API_KEY=your_google_gemini_api_key
+    PORT=4000
+    ```
+4.  Start the backend server:
+    ```bash
+    npm start
+    ```
+    *You should see "Server Running on Port 4000" and "Connected to MongoDB successfully".*
+
+### 3. Frontend Setup
+
+1.  Open a new terminal and navigate to the `chatbot` directory:
+    ```bash
+    cd chatbot
+    ```
+2.  Install dependencies:
+    ```bash
     npm install
     ```
-4. Set up environment variables for MongoDB, Firebase, and other API keys.
-
-5. Run the server and client:
+3.  Create a `.env` file in the `chatbot` directory:
+    ```env
+    REACT_APP_API_URL=http://localhost:4000
+    ```
+    *(Note: If deploying, replace this with your deployed backend URL)*
+4.  Start the React application:
     ```bash
-    cd server
-    npm start
-    cd ../client
     npm start
     ```
 
-### Usage
-- Visit the web application and sign up as a user.
-- Log in and start interacting with the chatbot for mental health support.
-- Book therapy sessions with available therapists based on the slots shown.
-- Admins can manage user interactions and session availability through the admin panel.
+## 🌍 Deployment
 
-### Future Enhancements
-- Incorporating AI-driven sentiment analysis for better chatbot responses.
-- Enhancing the booking system with reminders and integration with calendar apps.
-- Implementing data analytics for better insights into user mental health trends.
+### Deploying to Render.com (Recommended)
 
-### Contact
-For any queries or contributions, feel free to reach out to me:
-- **Author**: Byas Yadav
-- **Email**: byasyadav371@example.com
+**Backend (Web Service):**
+1.  Connect your repo to Render.
+2.  Root Directory: `Backend`
+3.  Build Command: `npm install`
+4.  Start Command: `node index.js`
+5.  Add Environment Variables (`MONGO_URI`, `API_KEY`, `JWT_SECRET`) in Render settings.
 
-### Snapshots
-![image](https://github.com/user-attachments/assets/dff3860f-7874-48d5-80f0-51de590c003a)
+**Frontend (Static Site):**
+1.  Connect your repo to Render.
+2.  Root Directory: `chatbot`
+3.  Build Command: `npm install && npm run build`
+4.  Publish Directory: `build`
+5.  Add Environment Variable: `REACT_APP_API_URL` (Set to your deployed Backend URL, e.g., `https://my-api.onrender.com` - **no trailing slash**).
 
-![image](https://github.com/user-attachments/assets/3465e21a-9722-4a53-ad5a-7a1c2b85487a)
+## 🤝 Contributing
 
-![image](https://github.com/user-attachments/assets/3461eb17-e8bf-4331-8b64-94856f3fc718)
-
-
-
+Contributions are welcome! Please feel free to submit a Pull Request.
