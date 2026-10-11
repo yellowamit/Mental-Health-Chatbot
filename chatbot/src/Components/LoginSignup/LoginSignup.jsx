@@ -22,15 +22,6 @@ const GoogleIcon = () => (
   </svg>
 );
 
-// Official Microsoft Logo SVG
-const MicrosoftIcon = () => (
-  <svg width="18" height="18" viewBox="0 0 21 21">
-    <rect x="1" y="1" width="9" height="9" fill="#f25022" />
-    <rect x="11" y="1" width="9" height="9" fill="#7fba00" />
-    <rect x="1" y="11" width="9" height="9" fill="#00a4ef" />
-    <rect x="11" y="11" width="9" height="9" fill="#ffb900" />
-  </svg>
-);
 
 function LoginSignup() {
   const [mode, setMode] = useState("Login"); // "Login" or "Signup"
@@ -80,18 +71,6 @@ function LoginSignup() {
       setIsSubmitting(false);
     }
   }, [navigate]);
-
-  // Handle Microsoft OAuth popup callback redirection
-  useEffect(() => {
-    if (window.location.hash) {
-      const hashParams = new URLSearchParams(window.location.hash.substring(1));
-      const accessToken = hashParams.get('access_token');
-      if (accessToken && window.opener) {
-        window.opener.postMessage({ type: 'MS_AUTH_SUCCESS', token: accessToken }, window.location.origin);
-        window.close();
-      }
-    }
-  }, []);
 
   // Dynamically load Google Identity Services SDK
   useEffect(() => {
@@ -152,47 +131,6 @@ function LoginSignup() {
     } else {
       setErrorMessage("Google Sign-In service is loading. Please check your internet connection.");
     }
-  };
-
-  // Legitimate Microsoft OAuth 2.0 Flow
-  const handleMicrosoftLogin = () => {
-    setErrorMessage("");
-    const msClientId = process.env.REACT_APP_MICROSOFT_CLIENT_ID;
-
-    if (!msClientId || msClientId.includes('your_azure_ad_client_id')) {
-      setErrorMessage(
-        "Microsoft OAuth requires a registered client ID. Please set REACT_APP_MICROSOFT_CLIENT_ID in chatbot/.env"
-      );
-      return;
-    }
-
-    const redirectUri = encodeURIComponent(window.location.origin + '/login');
-    const authUrl = `https://login.microsoftonline.com/common/oauth2/v2.0/authorize?client_id=${msClientId}&response_type=token&redirect_uri=${redirectUri}&scope=openid%20profile%20email%20User.Read&response_mode=fragment&prompt=select_account`;
-
-    const width = 520;
-    const height = 650;
-    const left = window.screen.width / 2 - width / 2;
-    const top = window.screen.height / 2 - height / 2;
-    const popup = window.open(
-      authUrl,
-      'Microsoft OAuth Sign-In',
-      `width=${width},height=${height},top=${top},left=${left}`
-    );
-
-    if (!popup || popup.closed || typeof popup.closed === 'undefined') {
-      setErrorMessage("Popup blocked. Please allow popups for this site to sign in with Microsoft.");
-      return;
-    }
-
-    // Listen for Microsoft OAuth token callback message
-    const messageListener = (event) => {
-      if (event.origin !== window.location.origin) return;
-      if (event.data?.type === 'MS_AUTH_SUCCESS' && event.data.token) {
-        window.removeEventListener('message', messageListener);
-        verifyOAuthWithBackend('microsoft', event.data.token);
-      }
-    };
-    window.addEventListener('message', messageListener);
   };
 
   // Traditional Email/Password Form submission
@@ -307,16 +245,6 @@ function LoginSignup() {
           >
             <GoogleIcon />
             <span>Continue with Google</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={handleMicrosoftLogin}
-            className="social-btn microsoft-btn"
-            disabled={isSubmitting}
-          >
-            <MicrosoftIcon />
-            <span>Continue with Microsoft</span>
           </button>
         </div>
 

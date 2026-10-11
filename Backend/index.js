@@ -2,9 +2,8 @@
 const express = require('express');
 const { GoogleGenerativeAI, HarmCategory, HarmBlockThreshold } = require('@google/generative-ai');
 const dotenv = require('dotenv');
-// DFkOX9LSyixlpjcZ
-  // mongodb+srv://supermanhappyvy:DFkOX9LSyixlpjcZ@cluster0.p6ggme1.mongodb.net/
 dotenv.config();
+
 
 console.log("Environment Variables Check:");
 console.log("PORT:", process.env.PORT);
@@ -509,7 +508,7 @@ app.post('/login',async(req,res)=>{
   }
 });
 
-// Endpoint for Authentic Social Login (Cryptographically Verified with Google & Microsoft)
+// Endpoint for Authentic Social Login (Cryptographically Verified with Google)
 app.post('/social-login', async (req, res) => {
   try {
     const { provider, token } = req.body;
@@ -519,19 +518,40 @@ app.post('/social-login', async (req, res) => {
       return res.status(400).json({ success: false, error: "OAuth credential token is required for authentication" });
     }
 
+    if (provider !== 'google') {
+      return res.status(400).json({ success: false, error: "Only Google authentication is currently supported." });
+    }
+
     let verifiedEmail = null;
     let verifiedName = null;
     let verifiedId = null;
+    let googleVerified = false;
 
-    if (provider === 'google') {
-      let googleVerified = false;
+    // 1. Try verifying as Google ID Token (from Google Identity Services credential)
+    try {
+      const idTokenRes = await fetch(`https://oauth2.googleapis.com/tokeninfo?id_token=${encodeURIComponent(token)}`);
+      if (idTokenRes.ok) {
+        const payload = await idTokenRes.json();
+        if (payload.email && (payload.email_verified === 'true' || payload.email_verified === true)) {
+          verifiedEmail = payload.email;
+          verifiedName = payload.name || payload.given_name || payload.email.split('@')[0];
+          verifiedId = payload.sub;
+          googleVerified = true;
+        }
+      }
+    } catch (e) {
+      // Continue to access_token check
+    }
 
-      // 1. Try verifying as Google ID Token (from Google Identity Services credential)
+    // 2. If not an ID token, verify as Google Access Token (from OAuth2 token client)
+    if (!googleVerified) {
       try {
-        const idTokenRes = await fetch(`https://oauth2.googleapis.com/tokeninfo?id_token=${encodeURIComponent(token)}`);
-        if (idTokenRes.ok) {
-          const payload = await idTokenRes.json();
-          if (payload.email && (payload.email_verified === 'true' || payload.email_verified === true)) {
+        const userinfoRes = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
+          headers: { Authorization: `Bearer ${token}` }
+        });
+        if (userinfoRes.ok) {
+          const payload = await userinfoRes.json();
+          if (payload.email) {
             verifiedEmail = payload.email;
             verifiedName = payload.name || payload.given_name || payload.email.split('@')[0];
             verifiedId = payload.sub;
@@ -539,58 +559,12 @@ app.post('/social-login', async (req, res) => {
           }
         }
       } catch (e) {
-        // Continue to access_token check
+        // Token invalid
       }
+    }
 
-      // 2. If not an ID token, verify as Google Access Token (from OAuth2 token client)
-      if (!googleVerified) {
-        try {
-          const userinfoRes = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
-            headers: { Authorization: `Bearer ${token}` }
-          });
-          if (userinfoRes.ok) {
-            const payload = await userinfoRes.json();
-            if (payload.email) {
-              verifiedEmail = payload.email;
-              verifiedName = payload.name || payload.given_name || payload.email.split('@')[0];
-              verifiedId = payload.sub;
-              googleVerified = true;
-            }
-          }
-        } catch (e) {
-          // Token invalid
-        }
-      }
-
-      if (!googleVerified || !verifiedEmail) {
-        return res.status(401).json({ success: false, error: "Invalid, forged, or expired Google OAuth credential" });
-      }
-
-    } else if (provider === 'microsoft') {
-      // Query Microsoft Graph API to cryptographically verify Microsoft Access Token
-      try {
-        const msRes = await fetch('https://graph.microsoft.com/v1.0/me', {
-          headers: { Authorization: `Bearer ${token}` }
-        });
-        if (!msRes.ok) {
-          const errorDetails = await msRes.text();
-          console.warn('Microsoft Graph verification failed:', errorDetails);
-          return res.status(401).json({ success: false, error: "Invalid or expired Microsoft OAuth token" });
-        }
-        const msProfile = await msRes.json();
-        verifiedEmail = msProfile.mail || msProfile.userPrincipalName;
-        verifiedName = msProfile.displayName || (verifiedEmail ? verifiedEmail.split('@')[0] : 'Microsoft User');
-        verifiedId = msProfile.id;
-      } catch (msErr) {
-        return res.status(401).json({ success: false, error: "Failed to connect to Microsoft Graph for verification" });
-      }
-
-      if (!verifiedEmail) {
-        return res.status(401).json({ success: false, error: "Unable to retrieve verified email from Microsoft account" });
-      }
-
-    } else {
-      return res.status(400).json({ success: false, error: "Unsupported OAuth provider: " + provider });
+    if (!googleVerified || !verifiedEmail) {
+      return res.status(401).json({ success: false, error: "Invalid, forged, or expired Google OAuth credential" });
     }
 
     // Lookup or create authentic user in MongoDB based strictly on verified provider data

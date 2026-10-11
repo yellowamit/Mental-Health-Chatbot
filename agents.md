@@ -148,6 +148,20 @@ Mental-Health-Chatbot/
    - Production build `npm run build`: Compiled successfully with 0 errors and 0 warnings.
    - Backend syntax check `node -c Backend/index.js`: 0 errors.
 
+### Phase 7: Streamlined Google-Only Authentication & Microsoft Removal
+1. **User Requirement**: Remove Microsoft OAuth completely, keeping only authentic Google Sign-In.
+2. **Frontend Simplification (`LoginSignup.jsx`)**:
+   - Removed `MicrosoftIcon` SVG component.
+   - Removed Microsoft OAuth popup flow and `postMessage` listener.
+   - Removed "Continue with Microsoft" button.
+   - Cleaned `chatbot/.env` and `chatbot/.env.example` to remove `REACT_APP_MICROSOFT_CLIENT_ID`.
+3. **Backend Hardening (`Backend/index.js`)**:
+   - Streamlined `POST /social-login` to strictly verify Google ID tokens and access tokens via Google OAuth2 endpoints (`oauth2.googleapis.com/tokeninfo` and `googleapis.com/oauth2/v3/userinfo`).
+   - Rejects non-Google providers with clean 400 response.
+4. **Verification**:
+   - Backend syntax verified with `node -c Backend/index.js` (0 errors).
+   - Production build verified with `npm run build` (Compiled successfully).
+
 ---
 
 ## 4. Current Status & Verification
@@ -157,9 +171,11 @@ Mental-Health-Chatbot/
 - [x] Markdown parsing & rendering integration complete with crisis callout detection
 - [x] UI/UX redesign of all pages to Modern Well-being theme complete
 - [x] Dynamic AI model fallback mechanism implemented and verified
-- [x] Strict Google & Microsoft OAuth 2.0 verification implemented without mocks
+- [x] Authentic Google OAuth 2.0 verification implemented without mocks
+- [x] Microsoft sign-in cleanly removed upon user preference
 - [x] In-chat dynamic Model Selector with live backend query implemented
 - [x] Discord-style Slow Mode rate limiting implemented (frontend + backend)
 - [x] Production build verified with zero warnings (`Compiled successfully`)
+
 
 
