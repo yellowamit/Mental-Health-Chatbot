@@ -180,6 +180,34 @@ Mental-Health-Chatbot/
 6. **Verification**:
    - Backend syntax verified with `node -c Backend/index.js` (0 errors).
 
+### Phase 9: Mandatory Chat Authentication & 15 Daily Message Quota
+1. **User Requirement**:
+   - No chatting without logging in (Gemini tokens are expensive).
+   - Redirect unauthenticated users immediately to login when clicking "Talk to WellBot" or accessing chatbot routes, remembering their intended destination and redirecting them back upon sign in.
+   - Strict daily quota of 15 requests per user per calendar day (UTC) to control token expenditures sustainably.
+2. **Backend Authentication & Rate Enforcement (`Backend/index.js`)**:
+   - Enforced `authenticateUser(req)` middleware helper on `POST /chat` and `GET /chat-usage`. Rejects missing, forged, or expired tokens with `401 Unauthorized` (`{ success: false, error: "Authentication required...", authRequired: true }`).
+   - Extended `userSchema` with `dailyChatCount: Number` and `lastChatDate: String` (UTC date `YYYY-MM-DD`).
+   - Defined `DAILY_CHAT_LIMIT = 15` (configurable via `DAILY_CHAT_LIMIT` env variable).
+   - Dynamic Day-Rollover: Checks current UTC day; if day transitioned, automatically resets `dailyChatCount = 0` and sets `lastChatDate = todayUTC`.
+   - Daily Quota Cut-off: If `user.dailyChatCount >= DAILY_CHAT_LIMIT`, immediately returns `HTTP 429 Too Many Requests` (`{ dailyLimitReached: true, remainingToday: 0, usedToday: 15, resetsAt: 'midnight UTC' }`).
+   - Token-Saving AI Call: Quota counter only increments upon *successful* AI completion; failed network calls do not waste user quota.
+   - Created `GET /chat-usage` endpoint to query live quota status for logged-in users.
+3. **Frontend Multi-Layer Redirection & Protection**:
+   - **Route-Level Protection (`App.js`)**: Created `<ProtectedRoute>` wrapping both `/check` and `/chatbot` routes, redirecting unauthenticated users to `/login` with `state: { from: location.pathname, message: "Please sign in or create an account to start chatting with WellBot." }`.
+   - **Component Mount Guard (`Check.jsx`)**: Checks `localStorage.getItem('auth-token')` on mount; navigates immediately to `/login` with location memory if missing or if server returns 401.
+   - **Navigation Interceptors (`Navbar.jsx` & `BeforeHome.jsx`)**: Desktop and mobile links intelligently redirect unauthenticated users directly to `/login` with friendly state notice.
+   - **Login Return Flow (`LoginSignup.jsx`)**: Reads `location.state?.from` upon successful email or Google sign-in and sends users directly into the chat session (`navigate(destination, { replace: true })`), displaying a soothing notice banner: `"Please sign in or create an account to start chatting with WellBot."`.
+4. **Chat UX Quota Indicators (`Check.jsx` & `Check.css`)**:
+   - **Header Daily Quota Badge**: Live pill chip displaying `✦ {remaining} / 15 daily` with reactive color changes (sage green -> amber -> red exhausted).
+   - **Input Quota Alert Bar**: Appears above message input when 15 daily messages are reached: `"You have used all 15 daily messages for today. Quota refreshes tomorrow at 00:00 UTC."`.
+   - **Input & Send Lock**: Disables textarea and send button once daily limit is reached.
+   - **Sidebar Quota Card**: Visual progress gauge and counter displaying used vs remaining daily messages.
+5. **Verification**:
+   - Automated unit test suite (`test_daily_quota_and_auth.js`): 23/23 assertions passed (100% pass rate) covering null/empty tokens, forged tokens, legitimate Bearer tokens, message progression 1-15, 16th message 429 cut-off, and calendar day rollover.
+   - Frontend build (`npm run build`): Compiled successfully with 0 errors and 0 warnings.
+   - Backend syntax check (`node -c Backend/index.js`): 0 errors.
+
 ---
 
 ## 4. Current Status & Verification
@@ -194,6 +222,8 @@ Mental-Health-Chatbot/
 - [x] In-chat dynamic Model Selector with live backend query implemented
 - [x] Discord-style Slow Mode rate limiting implemented (frontend + backend)
 - [x] Strict account uniqueness & automatic Google deduplication implemented
+- [x] Mandatory chat authentication & ProtectedRoute redirection implemented
+- [x] 15 daily messages per user quota implemented in database, API, and frontend UI
 - [x] Production build verified with zero warnings (`Compiled successfully`)
 
 

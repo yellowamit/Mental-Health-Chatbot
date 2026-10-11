@@ -43,7 +43,8 @@ function Navbar() {
               Home
             </Link>
             <Link
-              to="/check"
+              to={isAuthenticated ? "/check" : "/login"}
+              state={!isAuthenticated ? { from: '/check', message: 'Please sign in or create an account to start chatting with WellBot.' } : undefined}
               className={`nav-link ${isActive('/check') || isActive('/chatbot') ? 'active' : ''}`}
             >
               <MessageSquareHeart size={16} />
@@ -105,7 +106,8 @@ function Navbar() {
               Home
             </Link>
             <Link
-              to="/check"
+              to={isAuthenticated ? "/check" : "/login"}
+              state={!isAuthenticated ? { from: '/check', message: 'Please sign in or create an account to start chatting with WellBot.' } : undefined}
               onClick={() => setMobileMenuOpen(false)}
               className={`mobile-nav-link ${isActive('/check') ? 'active' : ''}`}
             >

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import './Check.css';
 import FormattedMessage from '../Common/FormattedMessage';
 import SpeechRecognition, { useSpeechRecognition } from 'react-speech-recognition';
@@ -31,12 +31,21 @@ const SUGGESTED_PROMPTS = [
 ];
 
 function Check() {
+  const navigate = useNavigate();
   const [userInput, setUserInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [copiedIndex, setCopiedIndex] = useState(null);
   const [availableModels, setAvailableModels] = useState([]);
   const [selectedModel, setSelectedModel] = useState('auto');
   const [isModelDropdownOpen, setIsModelDropdownOpen] = useState(false);
+
+  // Daily message limit state (15 requests per day)
+  const [dailyUsage, setDailyUsage] = useState({
+    limit: 15,
+    used: 0,
+    remaining: 15,
+    loaded: false
+  });
 
   // Discord-style Slow Mode rate limit state
   const [slowModeSeconds, setSlowModeSeconds] = useState(5);
@@ -70,6 +79,58 @@ function Check() {
     };
   }, []);
 
+  // Verify authentication on component mount and fetch user's daily quota
+  useEffect(() => {
+    const authToken = localStorage.getItem('auth-token');
+    if (!authToken) {
+      navigate('/login', {
+        state: {
+          from: '/check',
+          message: "Please sign in or create an account to start chatting with WellBot."
+        },
+        replace: true
+      });
+      return;
+    }
+
+    const fetchChatUsage = async () => {
+      try {
+        const baseUrl = process.env.REACT_APP_API_URL || 'http://localhost:4000';
+        const res = await fetch(`${baseUrl}/chat-usage`, {
+          headers: {
+            'auth-token': authToken,
+            'Authorization': `Bearer ${authToken}`
+          }
+        });
+
+        if (res.status === 401) {
+          localStorage.removeItem('auth-token');
+          navigate('/login', {
+            state: { from: '/check', message: 'Your session has expired. Please sign in again.' },
+            replace: true
+          });
+          return;
+        }
+
+        if (res.ok) {
+          const data = await res.json();
+          if (data.success) {
+            setDailyUsage({
+              limit: data.dailyLimit || 15,
+              used: data.usedToday || 0,
+              remaining: typeof data.remainingToday === 'number' ? data.remainingToday : 15,
+              loaded: true
+            });
+          }
+        }
+      } catch (err) {
+        console.warn("Could not fetch daily chat quota:", err);
+      }
+    };
+
+    fetchChatUsage();
+  }, [navigate]);
+
   const [chatHistory, setChatHistory] = useState([
     {
       role: 'bot',
@@ -102,6 +163,9 @@ function Check() {
           }
           if (data.slowModeSeconds) {
             setSlowModeSeconds(data.slowModeSeconds);
+          }
+          if (data.dailyLimit) {
+            setDailyUsage(prev => ({ ...prev, limit: data.dailyLimit }));
           }
         }
       } catch (err) {
@@ -175,7 +239,7 @@ function Check() {
   };
 
   const handlePromptClick = (promptText) => {
-    if (cooldownRemaining > 0 || isLoading) return;
+    if (cooldownRemaining > 0 || isLoading || dailyUsage.remaining <= 0) return;
     setUserInput(promptText);
     sendMessage(promptText);
   };
@@ -189,6 +253,21 @@ function Check() {
   const sendMessage = async (messageToSend) => {
     const text = (messageToSend || userInput).trim();
     if (!text || isLoading || cooldownRemaining > 0) return;
+
+    // Check client daily message quota
+    if (dailyUsage.remaining <= 0) {
+      alert("You have reached your daily limit of 15 messages for today. Your quota refreshes tomorrow at midnight UTC.");
+      return;
+    }
+
+    const authToken = localStorage.getItem('auth-token');
+    if (!authToken) {
+      navigate('/login', {
+        state: { from: '/check', message: 'Please sign in or create an account to start chatting with WellBot.' },
+        replace: true
+      });
+      return;
+    }
 
     if (isListening) {
       SpeechRecognition.stopListening();
@@ -211,12 +290,12 @@ function Check() {
 
     try {
       const baseUrl = process.env.REACT_APP_API_URL || 'http://localhost:4000';
-      const authToken = localStorage.getItem('auth-token');
       const response = await fetch(`${baseUrl}/chat`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          ...(authToken ? { 'auth-token': authToken } : {})
+          'auth-token': authToken,
+          'Authorization': `Bearer ${authToken}`
         },
         body: JSON.stringify({
           userInput: text,
@@ -224,8 +303,39 @@ function Check() {
         }),
       });
 
+      // Handle unauthenticated response
+      if (response.status === 401) {
+        localStorage.removeItem('auth-token');
+        navigate('/login', {
+          state: { from: '/check', message: 'Your session has expired. Please sign in to continue chatting.' },
+          replace: true
+        });
+        return;
+      }
+
+      // Handle rate limits: Daily Limit or Slow Mode
       if (response.status === 429) {
         const errData = await response.json().catch(() => ({}));
+
+        if (errData.dailyLimitReached) {
+          setDailyUsage(prev => ({
+            ...prev,
+            remaining: 0,
+            used: errData.dailyLimit || prev.limit
+          }));
+
+          setChatHistory([
+            ...updatedHistory,
+            {
+              role: 'bot',
+              message: `🌱 **Daily Mindful Limit Reached (${errData.dailyLimit || 15}/${errData.dailyLimit || 15})**\n\nYou have used all of your **${errData.dailyLimit || 15}** daily messages for today. WellBot provides 15 thoughtful messages daily to encourage intentional processing, self-reflection, and sustainable support.\n\nYour limit will refresh tomorrow at **00:00 UTC**.\n\n*If you are experiencing acute distress, please reach out to our crisis hotlines (988 in US, 112 in India) or schedule a session with a licensed counselor.*`,
+              modelUsed: 'Daily Quota',
+              timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+            }
+          ]);
+          return;
+        }
+
         const retryWait = errData.retryAfter || slowModeSeconds || 5;
         startCooldown(retryWait);
 
@@ -248,6 +358,21 @@ function Check() {
       const data = await response.json();
       const botMessage = data.response;
       const modelUsed = data.usedModel || (selectedModel !== 'auto' ? selectedModel : 'Gemini');
+
+      // Update daily usage state from server response
+      if (typeof data.remainingToday === 'number') {
+        setDailyUsage(prev => ({
+          ...prev,
+          remaining: data.remainingToday,
+          used: typeof data.usedToday === 'number' ? data.usedToday : (prev.limit - data.remainingToday)
+        }));
+      } else {
+        setDailyUsage(prev => ({
+          ...prev,
+          remaining: Math.max(0, prev.remaining - 1),
+          used: prev.used + 1
+        }));
+      }
 
       if (data.slowModeSeconds) {
         setSlowModeSeconds(data.slowModeSeconds);
@@ -281,7 +406,7 @@ function Check() {
 
   const handleSubmit = (event) => {
     event.preventDefault();
-    if (cooldownRemaining > 0 || isLoading) return;
+    if (cooldownRemaining > 0 || isLoading || dailyUsage.remaining <= 0) return;
     sendMessage(userInput);
   };
 
@@ -358,6 +483,15 @@ function Check() {
               >
                 <Clock size={13} className="slowmode-badge-icon" />
                 <span>{cooldownRemaining > 0 ? `${cooldownRemaining}s` : `${slowModeSeconds}s slow`}</span>
+              </div>
+
+              {/* Daily Message Quota Badge */}
+              <div
+                className={`header-quota-badge ${dailyUsage.remaining === 0 ? 'exhausted' : dailyUsage.remaining <= 3 ? 'low' : ''}`}
+                title={`Daily quota: ${dailyUsage.remaining} of ${dailyUsage.limit} messages remaining today`}
+              >
+                <Sparkles size={13} className="quota-badge-icon" />
+                <span>{dailyUsage.remaining} / {dailyUsage.limit} daily</span>
               </div>
 
               <Link to="/booking" className="quick-booking-link" title="Book a Session with a Therapist">
@@ -483,7 +617,7 @@ function Check() {
                     key={idx}
                     className="starter-chip"
                     onClick={() => handlePromptClick(prompt)}
-                    disabled={cooldownRemaining > 0 || isLoading}
+                    disabled={cooldownRemaining > 0 || isLoading || dailyUsage.remaining <= 0}
                   >
                     {prompt}
                   </button>
@@ -494,6 +628,16 @@ function Check() {
 
           {/* Input Form Bar */}
           <div className="chat-input-container">
+            {/* Daily Quota Exhausted Alert */}
+            {dailyUsage.remaining === 0 && (
+              <div className="daily-exhausted-alert-bar">
+                <Sparkles size={15} className="exhausted-star-icon" />
+                <span>
+                  You have used all <strong>{dailyUsage.limit} daily messages</strong> for today. Quota refreshes tomorrow at 00:00 UTC.
+                </span>
+              </div>
+            )}
+
             {/* Discord-style Slow Mode Bar */}
             <div className={`discord-slowmode-indicator ${cooldownRemaining > 0 ? 'cooling' : ''}`}>
               <div className="slowmode-indicator-left">
@@ -527,7 +671,7 @@ function Check() {
                   onClick={toggleListening}
                   className={`mic-toggle-btn ${isListening ? 'listening' : ''}`}
                   title={isListening ? 'Stop listening' : 'Start voice input'}
-                  disabled={cooldownRemaining > 0 || isLoading}
+                  disabled={cooldownRemaining > 0 || isLoading || dailyUsage.remaining <= 0}
                 >
                   {isListening ? <MicOff size={19} /> : <Mic size={19} />}
                 </button>
@@ -538,19 +682,27 @@ function Check() {
                 value={userInput}
                 onChange={handleChange}
                 placeholder={
-                  cooldownRemaining > 0
+                  dailyUsage.remaining === 0
+                    ? `Daily message limit reached (${dailyUsage.limit}/${dailyUsage.limit} used). Quota resets tomorrow at midnight UTC...`
+                    : cooldownRemaining > 0
                     ? `Slowmode active: pause for ${cooldownRemaining}s to send...`
                     : `Share what's on your mind with WellBot (${currentModelDisplay})...`
                 }
-                className={`chat-text-input ${cooldownRemaining > 0 ? 'input-cooling' : ''}`}
-                disabled={isLoading}
+                className={`chat-text-input ${cooldownRemaining > 0 ? 'input-cooling' : ''} ${dailyUsage.remaining === 0 ? 'input-exhausted' : ''}`}
+                disabled={isLoading || dailyUsage.remaining === 0}
               />
 
               <button
                 type="submit"
-                disabled={isLoading || !userInput.trim() || cooldownRemaining > 0}
-                className={`chat-send-btn ${cooldownRemaining > 0 ? 'btn-slowmode-locked' : ''}`}
-                title={cooldownRemaining > 0 ? `Slowmode active: ${cooldownRemaining}s remaining` : "Send message"}
+                disabled={isLoading || !userInput.trim() || cooldownRemaining > 0 || dailyUsage.remaining === 0}
+                className={`chat-send-btn ${cooldownRemaining > 0 ? 'btn-slowmode-locked' : ''} ${dailyUsage.remaining === 0 ? 'btn-quota-exhausted' : ''}`}
+                title={
+                  dailyUsage.remaining === 0
+                    ? "Daily message quota reached (15/15 messages)"
+                    : cooldownRemaining > 0
+                    ? `Slowmode active: ${cooldownRemaining}s remaining`
+                    : "Send message"
+                }
               >
                 {cooldownRemaining > 0 ? (
                   <span className="slowmode-btn-content">
@@ -609,6 +761,33 @@ function Check() {
                 <span>Ready to share thoughts</span>
               </div>
             )}
+          </div>
+
+          {/* Daily Message Quota Card */}
+          <div className="support-card daily-quota-card">
+            <div className="support-card-icon-box">
+              <Sparkles size={22} />
+            </div>
+            <h4>Daily AI Message Quota</h4>
+            <p>
+              Each user receives <strong>{dailyUsage.limit} messages daily</strong> to foster intentional reflection and protect community resources.
+            </p>
+            <div className="quota-sidebar-progress-box">
+              <div className="quota-bar-track">
+                <div
+                  className={`quota-bar-fill ${dailyUsage.remaining === 0 ? 'exhausted' : dailyUsage.remaining <= 3 ? 'low' : ''}`}
+                  style={{
+                    width: `${Math.min(100, Math.max(0, ((dailyUsage.limit - dailyUsage.remaining) / dailyUsage.limit) * 100))}%`
+                  }}
+                />
+              </div>
+              <div className="quota-metrics-row">
+                <span>{dailyUsage.used} / {dailyUsage.limit} used</span>
+                <span className={`quota-remaining-label ${dailyUsage.remaining === 0 ? 'exhausted' : ''}`}>
+                  {dailyUsage.remaining} remaining
+                </span>
+              </div>
+            </div>
           </div>
 
           {/* Therapy Booking Card */}

@@ -32,6 +32,7 @@ app.use(cors({
 // Rate Limiting & Discord-style Slow Mode Configuration
 const CHAT_SLOW_MODE_SECONDS = parseInt(process.env.CHAT_SLOW_MODE_SECONDS || '5', 10);
 const CHAT_MAX_MESSAGES_PER_MINUTE = parseInt(process.env.CHAT_MAX_MESSAGES_PER_MINUTE || '12', 10);
+const DAILY_CHAT_LIMIT = parseInt(process.env.DAILY_CHAT_LIMIT || '15', 10);
 
 // In-memory rate limiting store: clientId => { lastMessageTime: number, timestamps: number[] }
 const chatRateLimitStore = new Map();
@@ -117,6 +118,79 @@ function recordChatMessageSuccess(clientId) {
 mongoose.connect(process.env.MONGO_URI)
   .then(() => console.log("Connected to MongoDB successfully"))
   .catch((err) => console.error("Error connecting to MongoDB:", err));
+
+// Schema for Creating user model with strict uniqueness and daily chat quota
+const userSchema = new mongoose.Schema({
+  name: {
+    type: String,
+    trim: true,
+  },
+  email: {
+    type: String,
+    required: true,
+    unique: true,
+    trim: true,
+    lowercase: true,
+    index: true,
+  },
+  password: {
+    type: String,
+  },
+  authProvider: {
+    type: String,
+    default: 'local',
+    enum: ['local', 'google'],
+  },
+  providerId: {
+    type: String,
+    sparse: true,
+    index: true,
+  },
+  date: {
+    type: Date,
+    default: Date.now,
+  },
+  dailyChatCount: {
+    type: Number,
+    default: 0,
+  },
+  lastChatDate: {
+    type: String,
+    default: '',
+  }
+});
+
+const Users = mongoose.model('Users', userSchema);
+
+// Helper function to authenticate requests and retrieve the logged-in user
+async function authenticateUser(req) {
+  const authHeader = req.header('auth-token') || req.header('Authorization');
+  if (!authHeader) {
+    return { authenticated: false, status: 401, error: "Authentication required. Please sign in to talk with WellBot." };
+  }
+
+  const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7).trim() : authHeader.trim();
+  if (!token) {
+    return { authenticated: false, status: 401, error: "Authentication required. Please sign in to talk with WellBot." };
+  }
+
+  try {
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    const userId = decoded.userId || decoded.id || decoded.user?.id;
+    if (!userId) {
+      return { authenticated: false, status: 401, error: "Invalid token payload. Please sign in again." };
+    }
+
+    const user = await Users.findById(userId);
+    if (!user) {
+      return { authenticated: false, status: 401, error: "User account not found. Please sign in." };
+    }
+
+    return { authenticated: true, user, userId };
+  } catch (err) {
+    return { authenticated: false, status: 401, error: "Your session has expired or is invalid. Please sign in again." };
+  }
+}
 
 app.get('/',(req,res)=>{
   res.send("Server is running");
@@ -388,7 +462,8 @@ app.get('/models', async (req, res) => {
       activeModel: activeWorkingModel || 'gemini-1.5-flash',
       models: uniqueModels,
       slowModeSeconds: CHAT_SLOW_MODE_SECONDS,
-      maxMessagesPerMinute: CHAT_MAX_MESSAGES_PER_MINUTE
+      maxMessagesPerMinute: CHAT_MAX_MESSAGES_PER_MINUTE,
+      dailyLimit: DAILY_CHAT_LIMIT
     });
   } catch (err) {
     console.error('Error in /models endpoint:', err);
@@ -396,20 +471,84 @@ app.get('/models', async (req, res) => {
   }
 });
 
-// Manual CORS middleware removed in favor of cors package configuration above
+// Endpoint to retrieve current user's daily message quota and usage
+app.get('/chat-usage', async (req, res) => {
+  try {
+    const auth = await authenticateUser(req);
+    if (!auth.authenticated) {
+      return res.status(auth.status).json({ success: false, error: auth.error });
+    }
 
+    const { user } = auth;
+    const todayUTC = new Date().toISOString().split('T')[0];
+
+    // Reset daily counter if a new calendar day has started
+    if (user.lastChatDate !== todayUTC) {
+      user.dailyChatCount = 0;
+      user.lastChatDate = todayUTC;
+      await user.save();
+    }
+
+    const usedToday = user.dailyChatCount || 0;
+    const remainingToday = Math.max(0, DAILY_CHAT_LIMIT - usedToday);
+
+    res.json({
+      success: true,
+      dailyLimit: DAILY_CHAT_LIMIT,
+      usedToday,
+      remainingToday,
+      resetsAt: 'midnight UTC'
+    });
+  } catch (err) {
+    console.error('Error in /chat-usage endpoint:', err);
+    res.status(500).json({ success: false, error: 'Internal Server Error' });
+  }
+});
+
+// Primary Chat Endpoint - Authenticated & Daily Rate-Limited (15 requests/day)
 app.post('/chat', async (req, res) => {
   try {
+    // 1. Strict Authentication Enforcement: No chatting without logging in
+    const auth = await authenticateUser(req);
+    if (!auth.authenticated) {
+      return res.status(auth.status).json({
+        success: false,
+        error: auth.error,
+        authRequired: true
+      });
+    }
+
+    const { user, userId } = auth;
     const userInput = req.body?.userInput;
     const requestedModel = req.body?.model;
-    const clientId = getChatClientId(req);
-    console.log('Incoming /chat req:', { clientId, userInputLength: userInput?.length, requestedModel });
+    const clientId = `user_${userId}`;
+    console.log('Incoming authenticated /chat req:', { userId, email: user.email, userInputLength: userInput?.length, requestedModel });
 
     if (!userInput) {
       return res.status(400).json({ error: 'Invalid request body' });
     }
 
-    // Rate Limiting & Discord-style Slow Mode verification
+    // 2. Strict Daily Limit Enforcement (15 requests per calendar day UTC)
+    const todayUTC = new Date().toISOString().split('T')[0];
+    if (user.lastChatDate !== todayUTC) {
+      user.dailyChatCount = 0;
+      user.lastChatDate = todayUTC;
+    }
+
+    if (user.dailyChatCount >= DAILY_CHAT_LIMIT) {
+      console.warn(`[Daily Limit Exceeded] User ${user.email} (${userId}) reached daily limit of ${DAILY_CHAT_LIMIT}`);
+      return res.status(429).json({
+        success: false,
+        dailyLimitReached: true,
+        error: `You have reached your daily limit of ${DAILY_CHAT_LIMIT} messages for today. Your daily limit resets at midnight UTC.`,
+        dailyLimit: DAILY_CHAT_LIMIT,
+        remainingToday: 0,
+        usedToday: user.dailyChatCount,
+        resetsAt: 'midnight UTC'
+      });
+    }
+
+    // 3. Rate Limiting & Discord-style Slow Mode verification
     const rateCheck = verifyChatSlowMode(clientId);
     if (rateCheck.blocked) {
       res.setHeader('Retry-After', rateCheck.retryAfter);
@@ -422,56 +561,30 @@ app.post('/chat', async (req, res) => {
       });
     }
 
+    // 4. Run AI generation with candidate models
     const { text, usedModel } = await runChat(userInput, requestedModel);
 
-    // Record timestamp of successfully delivered message
+    // 5. Update user daily chat quota and rate limiter upon successful AI completion
+    user.dailyChatCount = (user.dailyChatCount || 0) + 1;
+    await user.save();
     recordChatMessageSuccess(clientId);
+
+    const remainingToday = Math.max(0, DAILY_CHAT_LIMIT - user.dailyChatCount);
+    console.log(`[Chat Success] User ${user.email} used message ${user.dailyChatCount}/${DAILY_CHAT_LIMIT} (${remainingToday} remaining)`);
 
     res.json({
       response: text,
       usedModel,
-      slowModeSeconds: CHAT_SLOW_MODE_SECONDS
+      slowModeSeconds: CHAT_SLOW_MODE_SECONDS,
+      dailyLimit: DAILY_CHAT_LIMIT,
+      remainingToday,
+      usedToday: user.dailyChatCount
     });
   } catch (error) {
     console.error('Error in chat endpoint:', error);
     res.status(500).json({ error: 'Internal Server Error' });
   }
 });
-
-// Schema for Creating user model with strict uniqueness
-const userSchema = new mongoose.Schema({
-  name: {
-    type: String,
-    trim: true,
-  },
-  email: {
-    type: String,
-    required: true,
-    unique: true,
-    trim: true,
-    lowercase: true,
-    index: true,
-  },
-  password: {
-    type: String,
-  },
-  authProvider: {
-    type: String,
-    default: 'local',
-    enum: ['local', 'google'],
-  },
-  providerId: {
-    type: String,
-    sparse: true,
-    index: true,
-  },
-  date: {
-    type: Date,
-    default: Date.now,
-  }
-});
-
-const Users = mongoose.model('Users', userSchema);
 
 // Creating endpoint for signup with duplicate protection
 app.post('/signup', async (req, res) => {

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { useNavigate, Link } from 'react-router-dom';
+import { useNavigate, useLocation, Link } from 'react-router-dom';
 import './LoginSignup.css';
 import {
   Heart,
@@ -28,6 +28,7 @@ function LoginSignup() {
   const [errorMessage, setErrorMessage] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const navigate = useNavigate();
+  const location = useLocation();
 
   const [formData, setFormData] = useState({
     username: "",
@@ -60,7 +61,8 @@ function LoginSignup() {
         if (data.user) {
           localStorage.setItem('user-info', JSON.stringify(data.user));
         }
-        navigate('/home');
+        const destination = location.state?.from || '/home';
+        navigate(destination, { replace: true });
       } else {
         setErrorMessage(data?.error || `Failed to authenticate with ${provider}. Verification rejected.`);
       }
@@ -72,7 +74,7 @@ function LoginSignup() {
     } finally {
       setIsSubmitting(false);
     }
-  }, [navigate]);
+  }, [navigate, location.state]);
 
   // Dynamically load Google Identity Services SDK
   useEffect(() => {
@@ -173,7 +175,8 @@ function LoginSignup() {
 
       if (responsedata && responsedata.success) {
         localStorage.setItem('auth-token', responsedata.token);
-        navigate('/home');
+        const destination = location.state?.from || '/home';
+        navigate(destination, { replace: true });
       } else {
         setErrorMessage(
           responsedata?.error ||
@@ -204,6 +207,14 @@ function LoginSignup() {
               : "Create a free, confidential account for your well-being"}
           </p>
         </div>
+
+        {/* Protected Route Redirect Notice */}
+        {location.state?.message && (
+          <div className="auth-notice-banner">
+            <Sparkles size={16} />
+            <span>{location.state.message}</span>
+          </div>
+        )}
 
         {/* Mode Switcher Tabs */}
         <div className="auth-toggle-bar">

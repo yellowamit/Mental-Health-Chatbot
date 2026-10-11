@@ -58,7 +58,11 @@ function BeforeHome() {
           </p>
 
           <div className="hero-cta-group">
-            <Link to="/check" className="cta-primary-btn">
+            <Link
+              to={localStorage.getItem('auth-token') ? "/check" : "/login"}
+              state={!localStorage.getItem('auth-token') ? { from: '/check', message: 'Please sign in or create an account to start chatting with WellBot.' } : undefined}
+              className="cta-primary-btn"
+            >
               <MessageSquareHeart size={18} />
               <span>Talk with WellBot</span>
             </Link>

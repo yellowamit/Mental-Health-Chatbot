@@ -78,6 +78,27 @@
   box-shadow: 0 2px 6px rgba(0, 0, 0, 0.06);
 }
 
+/* Redirect Notice Banner */
+.auth-notice-banner {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  background: #edf7f2;
+  border: 1px solid #c2e2d3;
+  color: #1e5a3d;
+  padding: 0.75rem 1rem;
+  border-radius: 12px;
+  font-size: 0.88rem;
+  font-weight: 600;
+  margin-bottom: 1.25rem;
+  box-shadow: 0 2px 8px rgba(45, 90, 67, 0.05);
+}
+
+.auth-notice-banner svg {
+  flex-shrink: 0;
+  color: #2ca58d;
+}
+
 /* Error Banner */
 .auth-error-banner {
   display: flex;
