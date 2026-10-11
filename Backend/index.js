@@ -27,8 +27,93 @@ app.use(cors({
   origin: true, // Reflects the request origin, enabling all origins
   credentials: true, // Allow cookies/headers if needed
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization']
+  allowedHeaders: ['Content-Type', 'Authorization', 'auth-token']
 }));
+
+// Rate Limiting & Discord-style Slow Mode Configuration
+const CHAT_SLOW_MODE_SECONDS = parseInt(process.env.CHAT_SLOW_MODE_SECONDS || '5', 10);
+const CHAT_MAX_MESSAGES_PER_MINUTE = parseInt(process.env.CHAT_MAX_MESSAGES_PER_MINUTE || '12', 10);
+
+// In-memory rate limiting store: clientId => { lastMessageTime: number, timestamps: number[] }
+const chatRateLimitStore = new Map();
+
+// Periodic GC cleanup: remove stale clients every 5 minutes
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, record] of chatRateLimitStore.entries()) {
+    if (now - record.lastMessageTime > 120000 && (!record.timestamps.length || now - record.timestamps[record.timestamps.length - 1] > 60000)) {
+      chatRateLimitStore.delete(key);
+    }
+  }
+}, 5 * 60 * 1000);
+
+function getChatClientId(req) {
+  // 1. Authenticated user ID via auth-token or Bearer token
+  const token = req.header('auth-token') || req.header('Authorization')?.replace('Bearer ', '');
+  if (token) {
+    try {
+      const decoded = jwt.decode(token);
+      if (decoded && (decoded.userId || decoded.id || decoded.user?.id)) {
+        return `user_${decoded.userId || decoded.id || decoded.user?.id}`;
+      }
+    } catch (_) {}
+  }
+  // 2. Client IP address
+  const forwarded = req.headers['x-forwarded-for'];
+  const ip = (forwarded ? forwarded.split(',')[0].trim() : (req.socket?.remoteAddress || req.ip || '127.0.0.1')).replace(/^.*:/, '');
+  return `ip_${ip}`;
+}
+
+function verifyChatSlowMode(clientId) {
+  const now = Date.now();
+  const record = chatRateLimitStore.get(clientId) || { lastMessageTime: 0, timestamps: [] };
+
+  // Rule 1: Discord Slow Mode Cooldown between consecutive messages
+  const cooldownMs = CHAT_SLOW_MODE_SECONDS * 1000;
+  const timeSinceLast = now - record.lastMessageTime;
+  if (record.lastMessageTime > 0 && timeSinceLast < cooldownMs) {
+    const remainingMs = cooldownMs - timeSinceLast;
+    const retryAfter = Math.max(1, Math.ceil(remainingMs / 1000));
+    return {
+      blocked: true,
+      reason: 'slow_mode',
+      retryAfter,
+      slowModeSeconds: CHAT_SLOW_MODE_SECONDS,
+      error: `Slow mode is active. Please pause for ${retryAfter}s before sending another message.`
+    };
+  }
+
+  // Rule 2: Rolling Window Rate Limit (e.g. max 12 messages per 60s)
+  const windowStart = now - 60000;
+  const recentTimestamps = record.timestamps.filter(ts => ts > windowStart);
+  if (recentTimestamps.length >= CHAT_MAX_MESSAGES_PER_MINUTE) {
+    const oldestInWindow = recentTimestamps[0];
+    const waitMs = (oldestInWindow + 60000) - now;
+    const retryAfter = Math.max(1, Math.ceil(waitMs / 1000));
+    return {
+      blocked: true,
+      reason: 'burst_limit',
+      retryAfter,
+      slowModeSeconds: CHAT_SLOW_MODE_SECONDS,
+      error: `Message limit reached (${CHAT_MAX_MESSAGES_PER_MINUTE} messages/min). Please wait ${retryAfter}s.`
+    };
+  }
+
+  return { blocked: false, slowModeSeconds: CHAT_SLOW_MODE_SECONDS };
+}
+
+function recordChatMessageSuccess(clientId) {
+  const now = Date.now();
+  const record = chatRateLimitStore.get(clientId) || { lastMessageTime: 0, timestamps: [] };
+  const windowStart = now - 60000;
+  const recentTimestamps = record.timestamps.filter(ts => ts > windowStart);
+  recentTimestamps.push(now);
+
+  chatRateLimitStore.set(clientId, {
+    lastMessageTime: now,
+    timestamps: recentTimestamps
+  });
+}
 
 mongoose.connect(process.env.MONGO_URI)
   .then(() => console.log("Connected to MongoDB successfully"))
@@ -299,7 +384,9 @@ app.get('/models', async (req, res) => {
     res.json({
       success: true,
       activeModel: activeWorkingModel || 'gemini-1.5-flash',
-      models: uniqueModels
+      models: uniqueModels,
+      slowModeSeconds: CHAT_SLOW_MODE_SECONDS,
+      maxMessagesPerMinute: CHAT_MAX_MESSAGES_PER_MINUTE
     });
   } catch (err) {
     console.error('Error in /models endpoint:', err);
@@ -313,13 +400,36 @@ app.post('/chat', async (req, res) => {
   try {
     const userInput = req.body?.userInput;
     const requestedModel = req.body?.model;
-    console.log('Incoming /chat req:', { userInput, requestedModel });
+    const clientId = getChatClientId(req);
+    console.log('Incoming /chat req:', { clientId, userInputLength: userInput?.length, requestedModel });
+
     if (!userInput) {
       return res.status(400).json({ error: 'Invalid request body' });
     }
 
+    // Rate Limiting & Discord-style Slow Mode verification
+    const rateCheck = verifyChatSlowMode(clientId);
+    if (rateCheck.blocked) {
+      res.setHeader('Retry-After', rateCheck.retryAfter);
+      return res.status(429).json({
+        success: false,
+        error: rateCheck.error,
+        retryAfter: rateCheck.retryAfter,
+        slowModeSeconds: rateCheck.slowModeSeconds,
+        reason: rateCheck.reason
+      });
+    }
+
     const { text, usedModel } = await runChat(userInput, requestedModel);
-    res.json({ response: text, usedModel });
+
+    // Record timestamp of successfully delivered message
+    recordChatMessageSuccess(clientId);
+
+    res.json({
+      response: text,
+      usedModel,
+      slowModeSeconds: CHAT_SLOW_MODE_SECONDS
+    });
   } catch (error) {
     console.error('Error in chat endpoint:', error);
     res.status(500).json({ error: 'Internal Server Error' });
@@ -399,45 +509,118 @@ app.post('/login',async(req,res)=>{
   }
 });
 
-// Endpoint for Social Login / Signup (Google & Microsoft)
+// Endpoint for Authentic Social Login (Cryptographically Verified with Google & Microsoft)
 app.post('/social-login', async (req, res) => {
   try {
-    const { provider, email, name, providerId } = req.body;
-    console.log(`Social Login Request [${provider}]:`, { email, name });
+    const { provider, token } = req.body;
+    console.log(`Authentic Social Login Request [${provider}]`);
 
-    if (!email) {
-      return res.status(400).json({ success: false, error: "Email is required for social login" });
+    if (!token) {
+      return res.status(400).json({ success: false, error: "OAuth credential token is required for authentication" });
     }
 
-    let user = await Users.findOne({ email });
+    let verifiedEmail = null;
+    let verifiedName = null;
+    let verifiedId = null;
+
+    if (provider === 'google') {
+      let googleVerified = false;
+
+      // 1. Try verifying as Google ID Token (from Google Identity Services credential)
+      try {
+        const idTokenRes = await fetch(`https://oauth2.googleapis.com/tokeninfo?id_token=${encodeURIComponent(token)}`);
+        if (idTokenRes.ok) {
+          const payload = await idTokenRes.json();
+          if (payload.email && (payload.email_verified === 'true' || payload.email_verified === true)) {
+            verifiedEmail = payload.email;
+            verifiedName = payload.name || payload.given_name || payload.email.split('@')[0];
+            verifiedId = payload.sub;
+            googleVerified = true;
+          }
+        }
+      } catch (e) {
+        // Continue to access_token check
+      }
+
+      // 2. If not an ID token, verify as Google Access Token (from OAuth2 token client)
+      if (!googleVerified) {
+        try {
+          const userinfoRes = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
+            headers: { Authorization: `Bearer ${token}` }
+          });
+          if (userinfoRes.ok) {
+            const payload = await userinfoRes.json();
+            if (payload.email) {
+              verifiedEmail = payload.email;
+              verifiedName = payload.name || payload.given_name || payload.email.split('@')[0];
+              verifiedId = payload.sub;
+              googleVerified = true;
+            }
+          }
+        } catch (e) {
+          // Token invalid
+        }
+      }
+
+      if (!googleVerified || !verifiedEmail) {
+        return res.status(401).json({ success: false, error: "Invalid, forged, or expired Google OAuth credential" });
+      }
+
+    } else if (provider === 'microsoft') {
+      // Query Microsoft Graph API to cryptographically verify Microsoft Access Token
+      try {
+        const msRes = await fetch('https://graph.microsoft.com/v1.0/me', {
+          headers: { Authorization: `Bearer ${token}` }
+        });
+        if (!msRes.ok) {
+          const errorDetails = await msRes.text();
+          console.warn('Microsoft Graph verification failed:', errorDetails);
+          return res.status(401).json({ success: false, error: "Invalid or expired Microsoft OAuth token" });
+        }
+        const msProfile = await msRes.json();
+        verifiedEmail = msProfile.mail || msProfile.userPrincipalName;
+        verifiedName = msProfile.displayName || (verifiedEmail ? verifiedEmail.split('@')[0] : 'Microsoft User');
+        verifiedId = msProfile.id;
+      } catch (msErr) {
+        return res.status(401).json({ success: false, error: "Failed to connect to Microsoft Graph for verification" });
+      }
+
+      if (!verifiedEmail) {
+        return res.status(401).json({ success: false, error: "Unable to retrieve verified email from Microsoft account" });
+      }
+
+    } else {
+      return res.status(400).json({ success: false, error: "Unsupported OAuth provider: " + provider });
+    }
+
+    // Lookup or create authentic user in MongoDB based strictly on verified provider data
+    let user = await Users.findOne({ email: verifiedEmail.toLowerCase() });
 
     if (user) {
-      // User exists: update provider if not set
       if (!user.authProvider || user.authProvider === 'local') {
-        user.authProvider = provider || 'social';
+        user.authProvider = provider;
       }
-      if (providerId && !user.providerId) {
-        user.providerId = providerId;
+      if (verifiedId) {
+        user.providerId = verifiedId;
       }
       await user.save();
-      console.log(`Existing user logged in via ${provider}:`, email);
+      console.log(`Verified ${provider} user logged in:`, verifiedEmail);
     } else {
-      // Create new user account automatically for social signup
       user = new Users({
-        name: name || (email.split('@')[0]),
-        email: email,
-        password: `social_${provider}_${Math.random().toString(36).slice(2)}`,
-        authProvider: provider || 'social',
-        providerId: providerId || ''
+        name: verifiedName,
+        email: verifiedEmail.toLowerCase(),
+        password: `oauth_${provider}_${Math.random().toString(36).slice(2)}_${Date.now()}`,
+        authProvider: provider,
+        providerId: verifiedId || ''
       });
       await user.save();
-      console.log(`New user registered via ${provider}:`, email);
+      console.log(`New verified user registered via ${provider}:`, verifiedEmail);
     }
 
-    const token = jwt.sign({ userId: user._id }, process.env.JWT_SECRET);
+    const jwtToken = jwt.sign({ userId: user._id }, process.env.JWT_SECRET);
     res.json({
       success: true,
-      token,
+      token: jwtToken,
       user: {
         id: user._id,
         name: user.name,
@@ -447,7 +630,7 @@ app.post('/social-login', async (req, res) => {
     });
   } catch (err) {
     console.error("Social Login Error:", err);
-    res.status(500).json({ success: false, error: "Internal Server Error during Social Login" });
+    res.status(500).json({ success: false, error: "Internal Server Error during Social OAuth" });
   }
 });
 

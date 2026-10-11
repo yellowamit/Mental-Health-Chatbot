@@ -112,9 +112,41 @@ Mental-Health-Chatbot/
 ### Phase 4: Verification & Build Validation
 - Production build executed via `npm run build`:
   - **Status**: Compiled successfully with **0 errors and 0 warnings**.
-  - Output bundle size: 120.91 kB gzipped.
+  - Output bundle size: 120.87 kB gzipped.
   - Clean accessibility compliance for headings, anchors, and form labels.
 - Backend syntax checked with `node -c Backend/index.js`: **0 errors**.
+
+### Phase 5: OAuth 2.0 Security Hardening & Zero-Mock Guarantee
+1. **User Requirement**: Complete removal of any mock/quick sign-in modals; enforce legitimate, cryptographic OAuth 2.0 verification for Google and Microsoft.
+2. **Backend Token Verification (`Backend/index.js`)**:
+   - Client sends only `{ provider, token }` to `POST /social-login`. Client is never trusted for email or username.
+   - **Google Verification**: Calls `https://oauth2.googleapis.com/tokeninfo?id_token=` or `https://www.googleapis.com/oauth2/v3/userinfo` with Bearer access token. Extracts verified `email`, `name`, and `sub`. Rejects forged or expired tokens with `401 Unauthorized`.
+   - **Microsoft Verification**: Calls Microsoft Graph API `https://graph.microsoft.com/v1.0/me` with Bearer access token. Extracts verified `mail` / `userPrincipalName` and `displayName`.
+3. **Frontend Integration (`LoginSignup.jsx`)**:
+   - Google: Uses Google Identity Services (GSI) `initTokenClient` and `id.prompt()`.
+   - Microsoft: Secure popup flow to `login.microsoftonline.com/common/oauth2/v2.0/authorize` with `window.opener.postMessage` exchange.
+   - If Client IDs are unset, displays a clear configuration banner referencing `chatbot/.env`.
+4. **Resume Integration**:
+   - Replaced URL Shortener in LaTeX resume with WellBot full-stack project highlighting MERN architecture, Gemini AI cascade, OAuth 2.0, and voice integration.
+
+### Phase 6: Discord-Style Slow Mode & AI Rate Limiting
+1. **User Requirement**: Implement a rate limiter / "slow mode" (like Discord slow mode) so users cannot spam messages to the AI chatbot too quickly.
+2. **Backend Architecture (`Backend/index.js`)**:
+   - In-memory rate limiting store: `chatRateLimitStore` with automatic garbage collection every 5 minutes.
+   - Client identifier resolution: authenticated JWT `userId` or client IP (`x-forwarded-for` / socket address).
+   - **Slow Mode Cooldown**: `CHAT_SLOW_MODE_SECONDS = 5` enforces spacing between consecutive messages. Returns `HTTP 429 Too Many Requests` with `Retry-After: <seconds>` if violated.
+   - **Burst Protection**: `CHAT_MAX_MESSAGES_PER_MINUTE = 12` rolling window protects Gemini API quotas from bot spam.
+   - Live configuration returned via `GET /models` (`slowModeSeconds`, `maxMessagesPerMinute`).
+3. **Frontend UX (`Check.jsx` & `Check.css`)**:
+   - **Discord-Style Slowmode Indicator**: Amber/warm status bar above message input displaying live countdown (`⏳ Slowmode is active — you can send another message in 4s...`) with an animated progress gauge.
+   - **Send Button Countdown**: Transforms into disabled timer chip (`<Clock size={14} /> 4s`) with smooth tick pulse animation.
+   - **Input Pacing**: Textarea remains editable for drafting thoughts but blocks submission via Enter or click until cooldown expires.
+   - **Graceful 429 Interception**: Server 429 responses trigger client cooldown countdown and append a mindful pause reflection prompt in the chat stream.
+   - **Header & Sidebar Badges**: Header slowmode chip and sidebar `Mindful Slow Mode (5s)` card explaining therapeutic conversational pacing.
+4. **Verification**:
+   - Unit tests in `test_slowmode.js`: 100% pass rate.
+   - Production build `npm run build`: Compiled successfully with 0 errors and 0 warnings.
+   - Backend syntax check `node -c Backend/index.js`: 0 errors.
 
 ---
 
@@ -125,6 +157,9 @@ Mental-Health-Chatbot/
 - [x] Markdown parsing & rendering integration complete with crisis callout detection
 - [x] UI/UX redesign of all pages to Modern Well-being theme complete
 - [x] Dynamic AI model fallback mechanism implemented and verified
-- [x] Google & Microsoft Social Authentication implemented (frontend + backend)
+- [x] Strict Google & Microsoft OAuth 2.0 verification implemented without mocks
 - [x] In-chat dynamic Model Selector with live backend query implemented
+- [x] Discord-style Slow Mode rate limiting implemented (frontend + backend)
 - [x] Production build verified with zero warnings (`Compiled successfully`)
+
+

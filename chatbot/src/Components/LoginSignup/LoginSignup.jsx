@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import './LoginSignup.css';
 import {
@@ -9,11 +9,10 @@ import {
   LogIn,
   UserPlus,
   AlertCircle,
-  Sparkles,
-  X
+  Sparkles
 } from 'lucide-react';
 
-// Google Brand Icon SVG
+// Official Google Logo SVG
 const GoogleIcon = () => (
   <svg width="19" height="19" viewBox="0 0 18 18">
     <path fill="#4285F4" d="M17.64 9.2c0-.637-.057-1.251-.164-1.84H9v3.481h4.844c-.209 1.125-.843 2.078-1.796 2.717v2.258h2.908c1.702-1.567 2.684-3.874 2.684-6.616z" />
@@ -23,7 +22,7 @@ const GoogleIcon = () => (
   </svg>
 );
 
-// Microsoft Brand Icon SVG
+// Official Microsoft Logo SVG
 const MicrosoftIcon = () => (
   <svg width="18" height="18" viewBox="0 0 21 21">
     <rect x="1" y="1" width="9" height="9" fill="#f25022" />
@@ -37,9 +36,6 @@ function LoginSignup() {
   const [mode, setMode] = useState("Login"); // "Login" or "Signup"
   const [errorMessage, setErrorMessage] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [socialModalProvider, setSocialModalProvider] = useState(null); // 'Google' | 'Microsoft' | null
-  const [socialEmailInput, setSocialEmailInput] = useState("");
-  const [socialNameInput, setSocialNameInput] = useState("");
   const navigate = useNavigate();
 
   const [formData, setFormData] = useState({
@@ -48,7 +44,56 @@ function LoginSignup() {
     email: ""
   });
 
-  // Load Google Identity Services SDK dynamically if configured
+  // Verify authentic OAuth token with backend server
+  const verifyOAuthWithBackend = useCallback(async (provider, token) => {
+    setIsSubmitting(true);
+    setErrorMessage("");
+    const baseUrl = process.env.REACT_APP_API_URL || 'http://localhost:4000';
+
+    try {
+      const response = await fetch(`${baseUrl}/social-login`, {
+        method: 'POST',
+        headers: {
+          'Accept': 'application/json',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          provider,
+          token
+        }),
+      });
+
+      const data = await response.json();
+      if (response.ok && data.success) {
+        localStorage.setItem('auth-token', data.token);
+        if (data.user) {
+          localStorage.setItem('user-info', JSON.stringify(data.user));
+        }
+        navigate('/home');
+      } else {
+        setErrorMessage(data?.error || `Failed to authenticate with ${provider}. Verification rejected.`);
+      }
+    } catch (err) {
+      console.error("OAuth verification fetch error:", err);
+      setErrorMessage(`Failed to verify ${provider} OAuth credentials with server.`);
+    } finally {
+      setIsSubmitting(false);
+    }
+  }, [navigate]);
+
+  // Handle Microsoft OAuth popup callback redirection
+  useEffect(() => {
+    if (window.location.hash) {
+      const hashParams = new URLSearchParams(window.location.hash.substring(1));
+      const accessToken = hashParams.get('access_token');
+      if (accessToken && window.opener) {
+        window.opener.postMessage({ type: 'MS_AUTH_SUCCESS', token: accessToken }, window.location.origin);
+        window.close();
+      }
+    }
+  }, []);
+
+  // Dynamically load Google Identity Services SDK
   useEffect(() => {
     const googleClientId = process.env.REACT_APP_GOOGLE_CLIENT_ID;
     if (googleClientId && !window.google) {
@@ -65,113 +110,92 @@ function LoginSignup() {
     if (errorMessage) setErrorMessage("");
   };
 
-  // Perform backend social authentication
-  const completeSocialAuth = async (provider, email, name) => {
-    setIsSubmitting(true);
+  // Legitimate Google Sign-In Flow
+  const handleGoogleLogin = () => {
     setErrorMessage("");
-    const baseUrl = process.env.REACT_APP_API_URL || 'http://localhost:4000';
-
-    try {
-      const response = await fetch(`${baseUrl}/social-login`, {
-        method: 'POST',
-        headers: {
-          'Accept': 'application/json',
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          provider: provider.toLowerCase(),
-          email,
-          name: name || email.split('@')[0],
-          providerId: `${provider.toLowerCase()}_${Date.now()}`
-        }),
-      });
-
-      const data = await response.json();
-      if (data && data.success) {
-        localStorage.setItem('auth-token', data.token);
-        if (data.user) {
-          localStorage.setItem('user-info', JSON.stringify(data.user));
-        }
-        setSocialModalProvider(null);
-        navigate('/home');
-      } else {
-        setErrorMessage(data?.error || `Failed to sign in with ${provider}`);
-      }
-    } catch (err) {
-      console.error("Social login fetch error:", err);
-      // Fallback demo token for offline testing
-      localStorage.setItem('auth-token', `demo_token_${provider.toLowerCase()}`);
-      setSocialModalProvider(null);
-      navigate('/home');
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
-
-  // Trigger Google Login
-  const handleGoogleClick = () => {
     const googleClientId = process.env.REACT_APP_GOOGLE_CLIENT_ID;
 
-    // If official Google Client ID is configured and SDK loaded, initialize it
-    if (googleClientId && window.google?.accounts?.id) {
-      try {
-        window.google.accounts.id.initialize({
-          client_id: googleClientId,
-          callback: (response) => {
-            // Parse JWT payload from credential token
-            try {
-              const base64Url = response.credential.split('.')[1];
-              const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
-              const jsonPayload = decodeURIComponent(
-                atob(base64)
-                  .split('')
-                  .map((c) => '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2))
-                  .join('')
-              );
-              const profile = JSON.parse(jsonPayload);
-              completeSocialAuth('Google', profile.email, profile.name);
-            } catch (e) {
-              completeSocialAuth('Google', 'user@gmail.com', 'Google User');
-            }
-          }
-        });
-        window.google.accounts.id.prompt();
-        return;
-      } catch (err) {
-        console.warn("Google SDK prompt failed, falling back to modal:", err);
-      }
-    }
-
-    // Modal popup fallback for instant testing & seamless login
-    setSocialModalProvider('Google');
-    setSocialEmailInput('');
-    setSocialNameInput('');
-  };
-
-  // Trigger Microsoft Login
-  const handleMicrosoftClick = () => {
-    const msClientId = process.env.REACT_APP_MICROSOFT_CLIENT_ID;
-
-    if (msClientId) {
-      // Standard Microsoft OAuth2 authorization endpoint redirect or popup
-      const redirectUri = window.location.origin + '/login';
-      const authUrl = `https://login.microsoftonline.com/common/oauth2/v2.0/authorize?client_id=${msClientId}&response_type=token&redirect_uri=${encodeURIComponent(redirectUri)}&scope=User.Read%20openid%20profile%20email`;
-      window.open(authUrl, '_blank', 'width=600,height=700');
+    if (!googleClientId || googleClientId.includes('your_google_client_id')) {
+      setErrorMessage(
+        "Google OAuth requires a registered client ID. Please set REACT_APP_GOOGLE_CLIENT_ID in chatbot/.env"
+      );
       return;
     }
 
-    // Modal popup fallback for instant testing & seamless login
-    setSocialModalProvider('Microsoft');
-    setSocialEmailInput('');
-    setSocialNameInput('');
+    if (window.google?.accounts?.oauth2) {
+      // Use Google OAuth 2.0 Token Client (Popup flow)
+      const tokenClient = window.google.accounts.oauth2.initTokenClient({
+        client_id: googleClientId,
+        scope: 'openid email profile',
+        callback: (tokenResponse) => {
+          if (tokenResponse.error) {
+            setErrorMessage(`Google Sign-In failed: ${tokenResponse.error}`);
+            return;
+          }
+          if (tokenResponse.access_token) {
+            verifyOAuthWithBackend('google', tokenResponse.access_token);
+          }
+        },
+      });
+      tokenClient.requestAccessToken({ prompt: 'select_account' });
+    } else if (window.google?.accounts?.id) {
+      // Fallback to Google GSI Credential ID Token prompt
+      window.google.accounts.id.initialize({
+        client_id: googleClientId,
+        callback: (response) => {
+          if (response.credential) {
+            verifyOAuthWithBackend('google', response.credential);
+          }
+        }
+      });
+      window.google.accounts.id.prompt();
+    } else {
+      setErrorMessage("Google Sign-In service is loading. Please check your internet connection.");
+    }
   };
 
-  const handleModalSubmit = (e) => {
-    e.preventDefault();
-    if (!socialEmailInput) return;
-    completeSocialAuth(socialModalProvider, socialEmailInput, socialNameInput);
+  // Legitimate Microsoft OAuth 2.0 Flow
+  const handleMicrosoftLogin = () => {
+    setErrorMessage("");
+    const msClientId = process.env.REACT_APP_MICROSOFT_CLIENT_ID;
+
+    if (!msClientId || msClientId.includes('your_azure_ad_client_id')) {
+      setErrorMessage(
+        "Microsoft OAuth requires a registered client ID. Please set REACT_APP_MICROSOFT_CLIENT_ID in chatbot/.env"
+      );
+      return;
+    }
+
+    const redirectUri = encodeURIComponent(window.location.origin + '/login');
+    const authUrl = `https://login.microsoftonline.com/common/oauth2/v2.0/authorize?client_id=${msClientId}&response_type=token&redirect_uri=${redirectUri}&scope=openid%20profile%20email%20User.Read&response_mode=fragment&prompt=select_account`;
+
+    const width = 520;
+    const height = 650;
+    const left = window.screen.width / 2 - width / 2;
+    const top = window.screen.height / 2 - height / 2;
+    const popup = window.open(
+      authUrl,
+      'Microsoft OAuth Sign-In',
+      `width=${width},height=${height},top=${top},left=${left}`
+    );
+
+    if (!popup || popup.closed || typeof popup.closed === 'undefined') {
+      setErrorMessage("Popup blocked. Please allow popups for this site to sign in with Microsoft.");
+      return;
+    }
+
+    // Listen for Microsoft OAuth token callback message
+    const messageListener = (event) => {
+      if (event.origin !== window.location.origin) return;
+      if (event.data?.type === 'MS_AUTH_SUCCESS' && event.data.token) {
+        window.removeEventListener('message', messageListener);
+        verifyOAuthWithBackend('microsoft', event.data.token);
+      }
+    };
+    window.addEventListener('message', messageListener);
   };
 
+  // Traditional Email/Password Form submission
   const handleAuth = async (e) => {
     e.preventDefault();
     setErrorMessage("");
@@ -273,11 +297,11 @@ function LoginSignup() {
           </div>
         )}
 
-        {/* Social Authentication Providers */}
+        {/* Official OAuth 2.0 Providers */}
         <div className="social-auth-section">
           <button
             type="button"
-            onClick={handleGoogleClick}
+            onClick={handleGoogleLogin}
             className="social-btn google-btn"
             disabled={isSubmitting}
           >
@@ -287,7 +311,7 @@ function LoginSignup() {
 
           <button
             type="button"
-            onClick={handleMicrosoftClick}
+            onClick={handleMicrosoftLogin}
             className="social-btn microsoft-btn"
             disabled={isSubmitting}
           >
@@ -376,103 +400,6 @@ function LoginSignup() {
           </Link>
         </div>
       </div>
-
-      {/* Social Provider Modal (Smooth, zero-friction OAuth prompt) */}
-      {socialModalProvider && (
-        <div className="social-modal-overlay" onClick={() => setSocialModalProvider(null)}>
-          <div className="social-modal-card" onClick={(e) => e.stopPropagation()}>
-            <div className="social-modal-header">
-              <div className="provider-logo-box">
-                {socialModalProvider === 'Google' ? <GoogleIcon /> : <MicrosoftIcon />}
-              </div>
-              <div>
-                <h3>Sign in with {socialModalProvider}</h3>
-                <p>Choose or enter your account to continue to WellBot</p>
-              </div>
-              <button
-                type="button"
-                className="social-modal-close"
-                onClick={() => setSocialModalProvider(null)}
-              >
-                <X size={18} />
-              </button>
-            </div>
-
-            {/* Quick Demo Account Click */}
-            <div className="quick-account-selector">
-              <span className="selector-label">Quick Sign-In:</span>
-              <button
-                type="button"
-                className="account-pill-btn"
-                onClick={() =>
-                  completeSocialAuth(
-                    socialModalProvider,
-                    socialModalProvider === 'Google'
-                      ? 'mindful.user@gmail.com'
-                      : 'mindful.user@outlook.com',
-                    'Mindful User'
-                  )
-                }
-              >
-                <div className="account-avatar-dot">
-                  {socialModalProvider === 'Google' ? 'G' : 'M'}
-                </div>
-                <div className="account-text-info">
-                  <strong>Mindful User</strong>
-                  <span>
-                    {socialModalProvider === 'Google'
-                      ? 'mindful.user@gmail.com'
-                      : 'mindful.user@outlook.com'}
-                  </span>
-                </div>
-              </button>
-            </div>
-
-            {/* Or Enter Custom Account */}
-            <form onSubmit={handleModalSubmit} className="social-custom-form">
-              <span className="selector-label">Or use your own {socialModalProvider} email:</span>
-              <div className="modal-input-group">
-                <input
-                  type="text"
-                  placeholder="Your Name (Optional)"
-                  value={socialNameInput}
-                  onChange={(e) => setSocialNameInput(e.target.value)}
-                  className="modal-text-input"
-                />
-                <input
-                  type="email"
-                  placeholder={
-                    socialModalProvider === 'Google'
-                      ? 'yourname@gmail.com'
-                      : 'yourname@outlook.com'
-                  }
-                  value={socialEmailInput}
-                  onChange={(e) => setSocialEmailInput(e.target.value)}
-                  required
-                  className="modal-text-input"
-                />
-              </div>
-
-              <div className="modal-actions-row">
-                <button
-                  type="button"
-                  className="modal-cancel-btn"
-                  onClick={() => setSocialModalProvider(null)}
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={!socialEmailInput}
-                  className="modal-confirm-btn"
-                >
-                  Continue with {socialModalProvider}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

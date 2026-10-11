@@ -17,7 +17,9 @@ import {
   Copy,
   Check as CheckIcon,
   Cpu,
-  ChevronDown
+  ChevronDown,
+  Clock,
+  Hourglass
 } from 'lucide-react';
 
 const SUGGESTED_PROMPTS = [
@@ -35,6 +37,38 @@ function Check() {
   const [availableModels, setAvailableModels] = useState([]);
   const [selectedModel, setSelectedModel] = useState('auto');
   const [isModelDropdownOpen, setIsModelDropdownOpen] = useState(false);
+
+  // Discord-style Slow Mode rate limit state
+  const [slowModeSeconds, setSlowModeSeconds] = useState(5);
+  const [cooldownRemaining, setCooldownRemaining] = useState(0);
+  const cooldownTimerRef = useRef(null);
+
+  const startCooldown = (seconds) => {
+    if (cooldownTimerRef.current) {
+      clearInterval(cooldownTimerRef.current);
+    }
+    const duration = Math.max(1, seconds || slowModeSeconds || 5);
+    setCooldownRemaining(duration);
+
+    cooldownTimerRef.current = setInterval(() => {
+      setCooldownRemaining((prev) => {
+        if (prev <= 1) {
+          clearInterval(cooldownTimerRef.current);
+          cooldownTimerRef.current = null;
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+  };
+
+  useEffect(() => {
+    return () => {
+      if (cooldownTimerRef.current) {
+        clearInterval(cooldownTimerRef.current);
+      }
+    };
+  }, []);
 
   const [chatHistory, setChatHistory] = useState([
     {
@@ -55,7 +89,7 @@ function Check() {
     listening: isListening
   } = useSpeechRecognition();
 
-  // Fetch available models from backend
+  // Fetch available models and server slow mode configuration
   useEffect(() => {
     const fetchAvailableModels = async () => {
       try {
@@ -65,6 +99,9 @@ function Check() {
           const data = await res.json();
           if (data.models && data.models.length > 0) {
             setAvailableModels(data.models);
+          }
+          if (data.slowModeSeconds) {
+            setSlowModeSeconds(data.slowModeSeconds);
           }
         }
       } catch (err) {
@@ -138,6 +175,7 @@ function Check() {
   };
 
   const handlePromptClick = (promptText) => {
+    if (cooldownRemaining > 0 || isLoading) return;
     setUserInput(promptText);
     sendMessage(promptText);
   };
@@ -150,7 +188,7 @@ function Check() {
 
   const sendMessage = async (messageToSend) => {
     const text = (messageToSend || userInput).trim();
-    if (!text || isLoading) return;
+    if (!text || isLoading || cooldownRemaining > 0) return;
 
     if (isListening) {
       SpeechRecognition.stopListening();
@@ -168,18 +206,40 @@ function Check() {
     resetTranscript();
     setIsLoading(true);
 
+    // Trigger Discord-style client cooldown immediately
+    startCooldown(slowModeSeconds);
+
     try {
       const baseUrl = process.env.REACT_APP_API_URL || 'http://localhost:4000';
+      const authToken = localStorage.getItem('auth-token');
       const response = await fetch(`${baseUrl}/chat`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          ...(authToken ? { 'auth-token': authToken } : {})
         },
         body: JSON.stringify({
           userInput: text,
           model: selectedModel
         }),
       });
+
+      if (response.status === 429) {
+        const errData = await response.json().catch(() => ({}));
+        const retryWait = errData.retryAfter || slowModeSeconds || 5;
+        startCooldown(retryWait);
+
+        setChatHistory([
+          ...updatedHistory,
+          {
+            role: 'bot',
+            message: `⏳ **Mindful Slow Mode Active**\n\nTake a gentle, grounding breath... To help everyone reflect thoughtfully and prevent rush, messages have a **${slowModeSeconds}s** pause between them.\n\nYou can send your next message in **${retryWait} seconds**.`,
+            modelUsed: 'WellBot Slowmode',
+            timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+          }
+        ]);
+        return;
+      }
 
       if (!response.ok) {
         throw new Error(`Server responded with ${response.status}`);
@@ -188,6 +248,12 @@ function Check() {
       const data = await response.json();
       const botMessage = data.response;
       const modelUsed = data.usedModel || (selectedModel !== 'auto' ? selectedModel : 'Gemini');
+
+      if (data.slowModeSeconds) {
+        setSlowModeSeconds(data.slowModeSeconds);
+        // Refresh cooldown if server dictates a longer slow mode
+        startCooldown(data.slowModeSeconds);
+      }
 
       setChatHistory([
         ...updatedHistory,
@@ -215,6 +281,7 @@ function Check() {
 
   const handleSubmit = (event) => {
     event.preventDefault();
+    if (cooldownRemaining > 0 || isLoading) return;
     sendMessage(userInput);
   };
 
@@ -282,6 +349,15 @@ function Check() {
                     </div>
                   </div>
                 )}
+              </div>
+
+              {/* Discord-style Slow Mode Chip */}
+              <div
+                className={`header-slowmode-badge ${cooldownRemaining > 0 ? 'cooling' : ''}`}
+                title={`Slow mode active: ${slowModeSeconds}s reflection pause between messages`}
+              >
+                <Clock size={13} className="slowmode-badge-icon" />
+                <span>{cooldownRemaining > 0 ? `${cooldownRemaining}s` : `${slowModeSeconds}s slow`}</span>
               </div>
 
               <Link to="/booking" className="quick-booking-link" title="Book a Session with a Therapist">
@@ -407,6 +483,7 @@ function Check() {
                     key={idx}
                     className="starter-chip"
                     onClick={() => handlePromptClick(prompt)}
+                    disabled={cooldownRemaining > 0 || isLoading}
                   >
                     {prompt}
                   </button>
@@ -417,13 +494,40 @@ function Check() {
 
           {/* Input Form Bar */}
           <div className="chat-input-container">
-            <form onSubmit={handleSubmit} className="chat-modern-form">
+            {/* Discord-style Slow Mode Bar */}
+            <div className={`discord-slowmode-indicator ${cooldownRemaining > 0 ? 'cooling' : ''}`}>
+              <div className="slowmode-indicator-left">
+                <Hourglass size={13} className={`slowmode-status-icon ${cooldownRemaining > 0 ? 'ticking' : ''}`} />
+                {cooldownRemaining > 0 ? (
+                  <span className="slowmode-countdown-message">
+                    Slowmode is active — you can send another message in <strong>{cooldownRemaining}s</strong>
+                  </span>
+                ) : (
+                  <span className="slowmode-idle-message">
+                    Slowmode is enabled ({slowModeSeconds}s)
+                  </span>
+                )}
+              </div>
+              {cooldownRemaining > 0 && (
+                <div className="slowmode-mini-gauge" title={`${cooldownRemaining}s remaining`}>
+                  <div
+                    className="slowmode-gauge-bar"
+                    style={{
+                      width: `${Math.min(100, Math.max(0, ((slowModeSeconds - cooldownRemaining) / slowModeSeconds) * 100))}%`
+                    }}
+                  />
+                </div>
+              )}
+            </div>
+
+            <form onSubmit={handleSubmit} className={`chat-modern-form ${cooldownRemaining > 0 ? 'form-slow-cooldown' : ''}`}>
               {browserSupportsSpeechRecognition && (
                 <button
                   type="button"
                   onClick={toggleListening}
                   className={`mic-toggle-btn ${isListening ? 'listening' : ''}`}
                   title={isListening ? 'Stop listening' : 'Start voice input'}
+                  disabled={cooldownRemaining > 0 || isLoading}
                 >
                   {isListening ? <MicOff size={19} /> : <Mic size={19} />}
                 </button>
@@ -433,18 +537,29 @@ function Check() {
                 type="text"
                 value={userInput}
                 onChange={handleChange}
-                placeholder={`Share what's on your mind with WellBot (${currentModelDisplay})...`}
-                className="chat-text-input"
+                placeholder={
+                  cooldownRemaining > 0
+                    ? `Slowmode active: pause for ${cooldownRemaining}s to send...`
+                    : `Share what's on your mind with WellBot (${currentModelDisplay})...`
+                }
+                className={`chat-text-input ${cooldownRemaining > 0 ? 'input-cooling' : ''}`}
                 disabled={isLoading}
               />
 
               <button
                 type="submit"
-                disabled={isLoading || !userInput.trim()}
-                className="chat-send-btn"
-                title="Send message"
+                disabled={isLoading || !userInput.trim() || cooldownRemaining > 0}
+                className={`chat-send-btn ${cooldownRemaining > 0 ? 'btn-slowmode-locked' : ''}`}
+                title={cooldownRemaining > 0 ? `Slowmode active: ${cooldownRemaining}s remaining` : "Send message"}
               >
-                <Send size={18} />
+                {cooldownRemaining > 0 ? (
+                  <span className="slowmode-btn-content">
+                    <Clock size={14} className="slowmode-btn-clock" />
+                    <span className="slowmode-btn-num">{cooldownRemaining}s</span>
+                  </span>
+                ) : (
+                  <Send size={18} />
+                )}
               </button>
             </form>
 
@@ -472,6 +587,28 @@ function Check() {
             <p>
               Switch between fast models or deep reflection models anytime using the header selector above.
             </p>
+          </div>
+
+          {/* Mindful Slow Mode Pacing Card */}
+          <div className="support-card slowmode-card">
+            <div className="support-card-icon-box">
+              <Hourglass size={22} />
+            </div>
+            <h4>Mindful Slow Mode ({slowModeSeconds}s)</h4>
+            <p>
+              A calming {slowModeSeconds}s pause between messages ensures intentional reflection and prevents spamming.
+            </p>
+            {cooldownRemaining > 0 ? (
+              <div className="slowmode-sidebar-status cooling">
+                <Clock size={13} />
+                <span>Pause: <strong>{cooldownRemaining}s</strong> remaining</span>
+              </div>
+            ) : (
+              <div className="slowmode-sidebar-status ready">
+                <CheckIcon size={13} />
+                <span>Ready to share thoughts</span>
+              </div>
+            )}
           </div>
 
           {/* Therapy Booking Card */}

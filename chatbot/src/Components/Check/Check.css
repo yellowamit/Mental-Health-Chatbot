@@ -809,6 +809,189 @@
   margin: 0;
 }
 
+/* Discord-Style Slow Mode Header Badge */
+.header-slowmode-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.4rem 0.75rem;
+  border-radius: 9999px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--text-muted, #6e8279);
+  background: #f4f8f5;
+  border: 1px solid var(--border-light, #e2ece5);
+  transition: all 0.25s ease;
+  user-select: none;
+}
+
+.header-slowmode-badge.cooling {
+  background: #fffbeb;
+  border-color: #fde68a;
+  color: #b45309;
+  box-shadow: 0 0 8px rgba(245, 158, 11, 0.15);
+}
+
+.slowmode-badge-icon {
+  flex-shrink: 0;
+}
+
+.header-slowmode-badge.cooling .slowmode-badge-icon {
+  animation: tickPulse 1s infinite alternate;
+}
+
+/* Discord-Style Slow Mode Input Indicator */
+.discord-slowmode-indicator {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.35rem 0.85rem;
+  margin-bottom: 0.5rem;
+  border-radius: 8px;
+  background: #f6faf7;
+  border: 1px solid #e2ece5;
+  font-size: 0.76rem;
+  color: var(--text-muted, #6e8279);
+  transition: all 0.25s ease;
+}
+
+.discord-slowmode-indicator.cooling {
+  background: #fefce8;
+  border-color: #fde047;
+  color: #854d0e;
+  animation: gentleGlow 2s infinite alternate;
+}
+
+.slowmode-indicator-left {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  flex: 1;
+}
+
+.slowmode-status-icon {
+  flex-shrink: 0;
+  color: var(--text-muted, #6e8279);
+}
+
+.discord-slowmode-indicator.cooling .slowmode-status-icon {
+  color: #d97706;
+}
+
+.slowmode-status-icon.ticking {
+  animation: rotateSlow 2s infinite linear;
+}
+
+.slowmode-countdown-message {
+  font-weight: 500;
+}
+
+.slowmode-countdown-message strong {
+  font-weight: 700;
+  color: #b45309;
+}
+
+.slowmode-idle-message {
+  font-weight: 500;
+}
+
+.slowmode-mini-gauge {
+  width: 90px;
+  height: 5px;
+  background: #fef08a;
+  border-radius: 9999px;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.slowmode-gauge-bar {
+  height: 100%;
+  background: linear-gradient(90deg, #d97706, #16a34a);
+  border-radius: 9999px;
+  transition: width 1s linear;
+}
+
+/* Slow Mode Form & Button Overrides */
+.chat-modern-form.form-slow-cooldown {
+  border-color: #fde68a;
+  background: #fffdf5;
+}
+
+.chat-text-input.input-cooling::placeholder {
+  color: #a89f81;
+}
+
+.chat-send-btn.btn-slowmode-locked {
+  background: #e2e8f0;
+  color: #64748b;
+  cursor: not-allowed;
+  box-shadow: none;
+  min-width: 52px;
+  width: auto;
+  padding: 0 0.65rem;
+  border-radius: 9999px;
+  border: 1px solid #cbd5e1;
+}
+
+.slowmode-btn-content {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: #475569;
+}
+
+.slowmode-btn-clock {
+  animation: tickPulse 1s infinite alternate;
+}
+
+/* Sidebar Slow Mode Card */
+.support-card.slowmode-card {
+  background: #ffffff;
+}
+
+.slowmode-sidebar-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.35rem 0.75rem;
+  border-radius: 9999px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  margin-top: 0.75rem;
+}
+
+.slowmode-sidebar-status.ready {
+  background: #eaf4ee;
+  color: var(--primary, #2d5a43);
+  border: 1px solid #c8e2d2;
+}
+
+.slowmode-sidebar-status.cooling {
+  background: #fffbeb;
+  color: #b45309;
+  border: 1px solid #fde68a;
+  box-shadow: 0 0 6px rgba(245, 158, 11, 0.12);
+}
+
+@keyframes rotateSlow {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+@keyframes tickPulse {
+  0% { transform: scale(1); opacity: 0.8; }
+  100% { transform: scale(1.15); opacity: 1; }
+}
+
+@keyframes gentleGlow {
+  0% { box-shadow: 0 0 0 rgba(245, 158, 11, 0); }
+  100% { box-shadow: 0 0 6px rgba(245, 158, 11, 0.15); }
+}
+
+
 /* Responsive Breakpoints */
 @media (max-width: 960px) {
   .chat-support-sidebar {
