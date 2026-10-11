@@ -38,40 +38,43 @@ app.get('/',(req,res)=>{
   res.send("Server is running");
 })
 
-const MODEL_NAME = "gemini-2.5-flash";
 const API_KEY = process.env.API_KEY;
-
 const genAI = new GoogleGenerativeAI(API_KEY);
-const model = genAI.getGenerativeModel({ model: MODEL_NAME });
 
-async function runChat(userInput) {
-  try {
-    const generationConfig = {
-      temperature: 0.9,
-      topK: 1,
-      topP: 1,
-      maxOutputTokens: 2048,
-    };
+// Prioritized list of candidate models to automatically try
+const CANDIDATE_MODELS = [
+  process.env.MODEL_NAME,
+  "gemini-1.5-flash",
+  "gemini-2.0-flash",
+  "gemini-1.5-pro",
+  "gemini-pro"
+].filter(Boolean);
 
-    const safetySettings = [
-      {
-        category: HarmCategory.HARM_CATEGORY_HATE_SPEECH,
-        threshold: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
-      },
-      {
-        category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT,
-        threshold: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
-      },
-      {
-        category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
-        threshold: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
-      },
-    ];
+let activeWorkingModel = null;
 
-    const chat = model.startChat({
-      generationConfig,
-      safetySettings,
-      history: [
+const generationConfig = {
+  temperature: 0.9,
+  topK: 1,
+  topP: 1,
+  maxOutputTokens: 2048,
+};
+
+const safetySettings = [
+  {
+    category: HarmCategory.HARM_CATEGORY_HATE_SPEECH,
+    threshold: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
+  },
+  {
+    category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT,
+    threshold: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
+  },
+  {
+    category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
+    threshold: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
+  },
+];
+
+const INITIAL_CHAT_HISTORY = [
           {
            role: "user",
            parts: [{ text: "You are mental health chatbot named 'WellBot' your task will be to be able to engage in empathetic conversations, actively listening to users' concerns and providing non-judgmental support, describe their symptoms or feelings, and based on the input, the chatbot can provide relevant information or suggest appropriate actions, handles situations where users express thoughts of self-harm or suicide. Provide resources and contact information for crisis hotlines or local mental health services, Offers guidance on self-care techniques, coping strategies, and mental health exercises to help users manage stress, anxiety, or depression. you should not answer to other answers which are not related to mental health , such as math calculations, weather predictions, call 100 or 112 for emergency, ask later on whether the user want to book for counselling session or not if yes then tell you can book after clicking on book a session by entering your name,age, address,time slot,"}],
@@ -209,30 +212,114 @@ async function runChat(userInput) {
            parts: [{ text: "Therapists are trained professionals who can provide you with the tools and support you need to navigate through difficult emotions and experiences. They can help you understand your feelings, develop coping mechanisms, and work towards your mental health goals. While I can't guarantee specific outcomes, seeking therapy is a positive step towards improving your well-being and addressing the challenges you're facing."}],
           },
       
-      ],
-    });
+];
 
-    const result = await chat.sendMessage(userInput);
-    const response = result.response;
-    return response.text();
-  } catch (error) {
-    console.error('Error in runChat:', error);
-    throw new Error('Error in runChat');
+async function runChat(userInput, requestedModel) {
+  // Build prioritized list: if a model was explicitly chosen, try it first
+  const modelsToTry = [
+    ...(requestedModel && requestedModel !== 'auto' ? [requestedModel] : []),
+    ...(activeWorkingModel ? [activeWorkingModel] : []),
+    ...CANDIDATE_MODELS
+  ].filter((modelName, index, self) => self.indexOf(modelName) === index);
+
+  let lastError = null;
+
+  for (const modelName of modelsToTry) {
+    try {
+      console.log(`[WellBot AI] Attempting response with model: ${modelName}`);
+      const model = genAI.getGenerativeModel({ model: modelName });
+      const chat = model.startChat({
+        generationConfig,
+        safetySettings,
+        history: INITIAL_CHAT_HISTORY,
+      });
+
+      const result = await chat.sendMessage(userInput);
+      const response = result.response;
+      const text = response.text();
+
+      // Remember the working model for future calls
+      activeWorkingModel = modelName;
+      console.log(`[WellBot AI] Success using model: ${modelName}`);
+      return { text, usedModel: modelName };
+    } catch (err) {
+      console.warn(`[WellBot AI] Model '${modelName}' failed (${err.message}). Trying next candidate...`);
+      lastError = err;
+    }
   }
+
+  console.error('[WellBot AI] All candidate models exhausted:', lastError);
+  throw lastError || new Error('All candidate AI models failed');
 }
+
+// Endpoint to fetch available models
+app.get('/models', async (req, res) => {
+  try {
+    const apiKey = process.env.API_KEY;
+    let liveModels = [];
+
+    if (apiKey) {
+      try {
+        const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`);
+        if (response.ok) {
+          const data = await response.json();
+          if (data.models && Array.isArray(data.models)) {
+            liveModels = data.models
+              .filter(m => m.supportedGenerationMethods && m.supportedGenerationMethods.includes('generateContent'))
+              .map(m => {
+                const cleanId = m.name.replace('models/', '');
+                return {
+                  id: cleanId,
+                  name: m.displayName || cleanId,
+                  description: m.description || ''
+                };
+              });
+          }
+        }
+      } catch (apiErr) {
+        console.warn('Could not query Google API for live models:', apiErr.message);
+      }
+    }
+
+    const curatedList = [
+      { id: 'gemini-1.5-flash', name: 'Gemini 1.5 Flash', description: 'Fast, responsive, & empathetic (Recommended)' },
+      { id: 'gemini-2.0-flash', name: 'Gemini 2.0 Flash', description: 'Next-generation speed & accuracy' },
+      { id: 'gemini-1.5-pro', name: 'Gemini 1.5 Pro', description: 'High reasoning & deeper emotional reflection' },
+      { id: 'gemini-pro', name: 'Gemini Pro', description: 'Classic reliable companion' }
+    ];
+
+    // Combine while ensuring no duplicate IDs
+    const finalModelList = [
+      { id: 'auto', name: 'Auto (Best Available)', description: 'Automatically picks whichever model is responding best' },
+      ...(liveModels.length > 0 ? liveModels : curatedList)
+    ];
+
+    const uniqueModels = finalModelList.filter((m, i, arr) => arr.findIndex(x => x.id === m.id) === i);
+
+    res.json({
+      success: true,
+      activeModel: activeWorkingModel || 'gemini-1.5-flash',
+      models: uniqueModels
+    });
+  } catch (err) {
+    console.error('Error in /models endpoint:', err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
 
 // Manual CORS middleware removed in favor of cors package configuration above
 
 app.post('/chat', async (req, res) => {
   try {
     const userInput = req.body?.userInput;
-    console.log('Incoming /chat req', userInput);
+    const requestedModel = req.body?.model;
+    console.log('Incoming /chat req:', { userInput, requestedModel });
     if (!userInput) {
       return res.status(400).json({ error: 'Invalid request body' });
     }
 
-    const response = await runChat(userInput);
-    res.json({ response });
+    const { text, usedModel } = await runChat(userInput, requestedModel);
+    res.json({ response: text, usedModel });
   } catch (error) {
     console.error('Error in chat endpoint:', error);
     res.status(500).json({ error: 'Internal Server Error' });
@@ -251,9 +338,13 @@ const Users=mongoose.model('Users',{
   password:{
     type:String,
   },
-  // logindata:{
-  //   type:Object,
-  // },
+  authProvider:{
+    type:String,
+    default:'local',
+  },
+  providerId:{
+    type:String,
+  },
   date:{
     type:Date,
     default:Date.now,
@@ -305,6 +396,58 @@ app.post('/login',async(req,res)=>{
   } catch (err) {
     console.error("Login Error:", err);
     res.status(500).json({success:false, error: "Internal Server Error during Login"});
+  }
+});
+
+// Endpoint for Social Login / Signup (Google & Microsoft)
+app.post('/social-login', async (req, res) => {
+  try {
+    const { provider, email, name, providerId } = req.body;
+    console.log(`Social Login Request [${provider}]:`, { email, name });
+
+    if (!email) {
+      return res.status(400).json({ success: false, error: "Email is required for social login" });
+    }
+
+    let user = await Users.findOne({ email });
+
+    if (user) {
+      // User exists: update provider if not set
+      if (!user.authProvider || user.authProvider === 'local') {
+        user.authProvider = provider || 'social';
+      }
+      if (providerId && !user.providerId) {
+        user.providerId = providerId;
+      }
+      await user.save();
+      console.log(`Existing user logged in via ${provider}:`, email);
+    } else {
+      // Create new user account automatically for social signup
+      user = new Users({
+        name: name || (email.split('@')[0]),
+        email: email,
+        password: `social_${provider}_${Math.random().toString(36).slice(2)}`,
+        authProvider: provider || 'social',
+        providerId: providerId || ''
+      });
+      await user.save();
+      console.log(`New user registered via ${provider}:`, email);
+    }
+
+    const token = jwt.sign({ userId: user._id }, process.env.JWT_SECRET);
+    res.json({
+      success: true,
+      token,
+      user: {
+        id: user._id,
+        name: user.name,
+        email: user.email,
+        authProvider: user.authProvider
+      }
+    });
+  } catch (err) {
+    console.error("Social Login Error:", err);
+    res.status(500).json({ success: false, error: "Internal Server Error during Social Login" });
   }
 });
 

@@ -15,7 +15,9 @@ import {
   User,
   Heart,
   Copy,
-  Check as CheckIcon
+  Check as CheckIcon,
+  Cpu,
+  ChevronDown
 } from 'lucide-react';
 
 const SUGGESTED_PROMPTS = [
@@ -30,15 +32,21 @@ function Check() {
   const [userInput, setUserInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [copiedIndex, setCopiedIndex] = useState(null);
+  const [availableModels, setAvailableModels] = useState([]);
+  const [selectedModel, setSelectedModel] = useState('auto');
+  const [isModelDropdownOpen, setIsModelDropdownOpen] = useState(false);
+
   const [chatHistory, setChatHistory] = useState([
     {
       role: 'bot',
       message: "Hello, friend. I'm **WellBot**, your empathetic companion.\n\nTake a gentle breath. This is a safe, non-judgmental space to share what's on your mind. How are you feeling right now?",
-      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      modelUsed: 'Gemini'
     }
   ]);
 
   const chatEndRef = useRef(null);
+  const dropdownRef = useRef(null);
 
   const {
     transcript,
@@ -46,6 +54,44 @@ function Check() {
     browserSupportsSpeechRecognition,
     listening: isListening
   } = useSpeechRecognition();
+
+  // Fetch available models from backend
+  useEffect(() => {
+    const fetchAvailableModels = async () => {
+      try {
+        const baseUrl = process.env.REACT_APP_API_URL || 'http://localhost:4000';
+        const res = await fetch(`${baseUrl}/models`);
+        if (res.ok) {
+          const data = await res.json();
+          if (data.models && data.models.length > 0) {
+            setAvailableModels(data.models);
+          }
+        }
+      } catch (err) {
+        console.warn("Could not fetch models from server:", err);
+        // Fallback default list
+        setAvailableModels([
+          { id: 'auto', name: 'Auto (Best Available)', description: 'Cascading fallback across active models' },
+          { id: 'gemini-1.5-flash', name: 'Gemini 1.5 Flash', description: 'Fast, responsive, & empathetic (Recommended)' },
+          { id: 'gemini-2.0-flash', name: 'Gemini 2.0 Flash', description: 'Next-generation speed & accuracy' },
+          { id: 'gemini-1.5-pro', name: 'Gemini 1.5 Pro', description: 'High reasoning & deeper emotional reflection' },
+          { id: 'gemini-pro', name: 'Gemini Pro', description: 'Classic companion model' }
+        ]);
+      }
+    };
+    fetchAvailableModels();
+  }, []);
+
+  // Close model dropdown on outside click
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target)) {
+        setIsModelDropdownOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
 
   useEffect(() => {
     scrollToBottom();
@@ -82,7 +128,8 @@ function Check() {
         {
           role: 'bot',
           message: "Welcome back to your fresh start. Take a gentle breath. What would you like to reflect on today?",
-          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          modelUsed: selectedModel !== 'auto' ? selectedModel : 'Gemini'
         }
       ]);
       setUserInput('');
@@ -128,7 +175,10 @@ function Check() {
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ userInput: text }),
+        body: JSON.stringify({
+          userInput: text,
+          model: selectedModel
+        }),
       });
 
       if (!response.ok) {
@@ -137,12 +187,14 @@ function Check() {
 
       const data = await response.json();
       const botMessage = data.response;
+      const modelUsed = data.usedModel || (selectedModel !== 'auto' ? selectedModel : 'Gemini');
 
       setChatHistory([
         ...updatedHistory,
         {
           role: 'bot',
           message: botMessage,
+          modelUsed,
           timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
         }
       ]);
@@ -166,6 +218,8 @@ function Check() {
     sendMessage(userInput);
   };
 
+  const currentModelDisplay = availableModels.find(m => m.id === selectedModel)?.name || 'Auto (Best Available)';
+
   return (
     <div className="wellness-chat-page">
       <div className="chat-layout-container">
@@ -188,6 +242,48 @@ function Check() {
             </div>
 
             <div className="chat-header-actions">
+              {/* Dynamic Model Selector Dropdown */}
+              <div className="model-selector-wrapper" ref={dropdownRef}>
+                <button
+                  type="button"
+                  className="model-selector-btn"
+                  onClick={() => setIsModelDropdownOpen(!isModelDropdownOpen)}
+                  title="Choose which AI model powers the chat"
+                >
+                  <Cpu size={14} className="model-btn-icon" />
+                  <span className="selected-model-name">{currentModelDisplay}</span>
+                  <ChevronDown size={14} className={`dropdown-chevron ${isModelDropdownOpen ? 'open' : ''}`} />
+                </button>
+
+                {isModelDropdownOpen && (
+                  <div className="model-dropdown-menu">
+                    <div className="dropdown-header">
+                      <Sparkles size={13} />
+                      <span>Available AI Models</span>
+                    </div>
+                    <div className="model-options-list">
+                      {availableModels.map((m) => (
+                        <button
+                          key={m.id}
+                          type="button"
+                          className={`model-option-item ${selectedModel === m.id ? 'active' : ''}`}
+                          onClick={() => {
+                            setSelectedModel(m.id);
+                            setIsModelDropdownOpen(false);
+                          }}
+                        >
+                          <div className="model-item-info">
+                            <span className="model-item-title">{m.name}</span>
+                            {m.description && <span className="model-item-desc">{m.description}</span>}
+                          </div>
+                          {selectedModel === m.id && <CheckIcon size={14} className="model-active-check" />}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+
               <Link to="/booking" className="quick-booking-link" title="Book a Session with a Therapist">
                 <CalendarCheck size={16} />
                 <span>Book Therapist</span>
@@ -220,6 +316,11 @@ function Check() {
                     <div className="message-meta-header">
                       <span className="sender-name">{isBot ? 'WellBot' : 'You'}</span>
                       <span className="message-time">{item.timestamp}</span>
+                      {isBot && item.modelUsed && (
+                        <span className="model-used-chip" title="Model that generated this response">
+                          ✦ {item.modelUsed}
+                        </span>
+                      )}
                     </div>
 
                     <div className={`message-body-box ${isBot ? 'bot-bubble' : 'user-bubble'}`}>
@@ -267,7 +368,9 @@ function Check() {
                       <span />
                       <span />
                     </div>
-                    <span className="typing-text">WellBot is listening and reflecting...</span>
+                    <span className="typing-text">
+                      WellBot ({currentModelDisplay}) is listening and reflecting...
+                    </span>
                   </div>
                 </div>
               </div>
@@ -330,7 +433,7 @@ function Check() {
                 type="text"
                 value={userInput}
                 onChange={handleChange}
-                placeholder="Share how you're feeling, or ask for guidance..."
+                placeholder={`Share what's on your mind with WellBot (${currentModelDisplay})...`}
                 className="chat-text-input"
                 disabled={isLoading}
               />
@@ -356,6 +459,21 @@ function Check() {
 
         {/* Supportive Side Cards */}
         <div className="chat-support-sidebar">
+          {/* Active AI Model Card */}
+          <div className="support-card model-info-card">
+            <div className="support-card-icon-box">
+              <Cpu size={22} />
+            </div>
+            <h4>Active AI Model</h4>
+            <div className="active-model-status-chip">
+              <span className="status-live-dot" />
+              <strong>{currentModelDisplay}</strong>
+            </div>
+            <p>
+              Switch between fast models or deep reflection models anytime using the header selector above.
+            </p>
+          </div>
+
           {/* Therapy Booking Card */}
           <div className="support-card therapy-highlight-card">
             <div className="support-card-icon-box">

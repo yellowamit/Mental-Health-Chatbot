@@ -104,14 +104,17 @@ Mental-Health-Chatbot/
 5. Upgraded `Navbar.jsx` with glassmorphic styling, active navigation state, fast-access Crisis Support modal, responsive mobile drawer, and session status badge.
 6. Redesigned `BeforeHome.jsx` and `Home.jsx` into calming wellness spaces with hero sections, live breathing tools, daily affirmation cards, and wellness pillar resources.
 7. Redesigned `Booking.jsx` with specialty chips, clean form inputs, inline validations, and an appointment history manager.
-8. Upgraded `LoginSignup.jsx` into a comforting, secure authentication flow.
-9. Upgraded `Footer.jsx` with emergency hotlines, medical safety disclaimers, and contact details.
+8. Upgraded `LoginSignup.jsx` into a comforting, secure authentication flow with **Google** and **Microsoft** Social Sign-In buttons and interactive OAuth / modal flows.
+9. Added backend `/social-login` endpoint in `Backend/index.js` supporting Google and Microsoft account linking, automatic account creation, and JWT issuance.
+10. Implemented dynamic multi-model auto-discovery and cascading fallback in `Backend/index.js` (prioritizes active working model, cascades through `gemini-1.5-flash`, `gemini-2.0-flash`, `gemini-1.5-pro`, `gemini-pro`).
+11. Created `GET /models` endpoint in `Backend/index.js` querying Google's Generative Language API for live models with curated fallback, and built an interactive in-chat **Model Selector** dropdown in `Check.jsx` displaying model descriptions, active status, and response badges.
 
 ### Phase 4: Verification & Build Validation
 - Production build executed via `npm run build`:
   - **Status**: Compiled successfully with **0 errors and 0 warnings**.
-  - Output bundle size: 117.87 kB gzipped.
+  - Output bundle size: 120.91 kB gzipped.
   - Clean accessibility compliance for headings, anchors, and form labels.
+- Backend syntax checked with `node -c Backend/index.js`: **0 errors**.
 
 ---
 
@@ -121,4 +124,7 @@ Mental-Health-Chatbot/
 - [x] Frontend dependencies installed (`react-markdown`, `remark-gfm`, `lucide-react`)
 - [x] Markdown parsing & rendering integration complete with crisis callout detection
 - [x] UI/UX redesign of all pages to Modern Well-being theme complete
+- [x] Dynamic AI model fallback mechanism implemented and verified
+- [x] Google & Microsoft Social Authentication implemented (frontend + backend)
+- [x] In-chat dynamic Model Selector with live backend query implemented
 - [x] Production build verified with zero warnings (`Compiled successfully`)
