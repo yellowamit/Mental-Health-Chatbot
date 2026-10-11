@@ -162,6 +162,24 @@ Mental-Health-Chatbot/
    - Backend syntax verified with `node -c Backend/index.js` (0 errors).
    - Production build verified with `npm run build` (Compiled successfully).
 
+### Phase 8: Strict Account Uniqueness & Deduplication Architecture
+1. **User Requirement**: Prevent duplicate accounts from being created on the same email or Google ID across all signup and login pathways.
+2. **Schema Level Protection (`Users`)**:
+   - Normalized `email`: `lowercase: true`, `trim: true`, `unique: true`, `index: true`.
+   - Google `providerId`: `sparse: true`, `index: true` (ensures uniqueness without colliding for password users).
+3. **Smart Linking on Google Social Login (`POST /social-login`)**:
+   - Queries existing accounts by both `$or: [{ email: normalizedEmail }, { providerId: verifiedId }]`.
+   - If an account already exists (whether previously registered via local password or Google), links the Google credentials and logs into the **same** user record without creating a duplicate.
+   - Handles MongoDB Error 11000 race conditions by falling back to the existing document cleanly.
+4. **Duplicate Prevention on Manual Signup (`POST /signup`)**:
+   - Checks case-insensitive normalized email against existing records.
+   - If an account exists via Google, warns: `"An account with this email was registered via Google Sign-In. Please click 'Continue with Google' to sign in."`
+   - If an account exists via password, warns: `"An account with this email already exists. Please sign in instead."`
+5. **Cross-Method Login Guidance (`POST /login`)**:
+   - If a Google-registered user attempts password login, gently directs them: `"This account was registered using Google. Please click 'Continue with Google' to sign in."`
+6. **Verification**:
+   - Backend syntax verified with `node -c Backend/index.js` (0 errors).
+
 ---
 
 ## 4. Current Status & Verification
@@ -175,7 +193,9 @@ Mental-Health-Chatbot/
 - [x] Microsoft sign-in cleanly removed upon user preference
 - [x] In-chat dynamic Model Selector with live backend query implemented
 - [x] Discord-style Slow Mode rate limiting implemented (frontend + backend)
+- [x] Strict account uniqueness & automatic Google deduplication implemented
 - [x] Production build verified with zero warnings (`Compiled successfully`)
+
 
 
 

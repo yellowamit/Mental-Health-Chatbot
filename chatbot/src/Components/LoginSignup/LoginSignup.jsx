@@ -66,7 +66,9 @@ function LoginSignup() {
       }
     } catch (err) {
       console.error("OAuth verification fetch error:", err);
-      setErrorMessage(`Failed to verify ${provider} OAuth credentials with server.`);
+      setErrorMessage(
+        `Cannot reach backend server at "${baseUrl}". Please ensure your backend is running and REACT_APP_API_URL is configured.`
+      );
     } finally {
       setIsSubmitting(false);
     }

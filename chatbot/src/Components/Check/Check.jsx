@@ -109,10 +109,10 @@ function Check() {
         // Fallback default list
         setAvailableModels([
           { id: 'auto', name: 'Auto (Best Available)', description: 'Cascading fallback across active models' },
-          { id: 'gemini-1.5-flash', name: 'Gemini 1.5 Flash', description: 'Fast, responsive, & empathetic (Recommended)' },
-          { id: 'gemini-2.0-flash', name: 'Gemini 2.0 Flash', description: 'Next-generation speed & accuracy' },
-          { id: 'gemini-1.5-pro', name: 'Gemini 1.5 Pro', description: 'High reasoning & deeper emotional reflection' },
-          { id: 'gemini-pro', name: 'Gemini Pro', description: 'Classic companion model' }
+          { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash', description: 'Next-gen ultra-fast, empathetic, & responsive (Recommended)' },
+          { id: 'gemini-flash-latest', name: 'Gemini Flash (Latest)', description: 'Always up-to-date high-efficiency model' },
+          { id: 'gemini-2.5-pro', name: 'Gemini 2.5 Pro', description: 'Deep emotional reflection & complex reasoning' },
+          { id: 'gemini-pro-latest', name: 'Gemini Pro (Latest)', description: 'Reliable reasoning companion' }
         ]);
       }
     };

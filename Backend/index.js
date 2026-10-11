@@ -128,9 +128,12 @@ const genAI = new GoogleGenerativeAI(API_KEY);
 // Prioritized list of candidate models to automatically try
 const CANDIDATE_MODELS = [
   process.env.MODEL_NAME,
+  "gemini-2.5-flash",
+  "gemini-flash-latest",
+  "gemini-2.5-pro",
+  "gemini-pro-latest",
+  "gemini-2.5-flash-lite",
   "gemini-1.5-flash",
-  "gemini-2.0-flash",
-  "gemini-1.5-pro",
   "gemini-pro"
 ].filter(Boolean);
 
@@ -311,7 +314,7 @@ async function runChat(userInput, requestedModel) {
   for (const modelName of modelsToTry) {
     try {
       console.log(`[WellBot AI] Attempting response with model: ${modelName}`);
-      const model = genAI.getGenerativeModel({ model: modelName });
+      const model = genAI.getGenerativeModel({ model: modelName }, { apiVersion: 'v1beta' });
       const chat = model.startChat({
         generationConfig,
         safetySettings,
@@ -366,10 +369,10 @@ app.get('/models', async (req, res) => {
     }
 
     const curatedList = [
-      { id: 'gemini-1.5-flash', name: 'Gemini 1.5 Flash', description: 'Fast, responsive, & empathetic (Recommended)' },
-      { id: 'gemini-2.0-flash', name: 'Gemini 2.0 Flash', description: 'Next-generation speed & accuracy' },
-      { id: 'gemini-1.5-pro', name: 'Gemini 1.5 Pro', description: 'High reasoning & deeper emotional reflection' },
-      { id: 'gemini-pro', name: 'Gemini Pro', description: 'Classic reliable companion' }
+      { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash', description: 'Next-gen ultra-fast, empathetic, & responsive (Recommended)' },
+      { id: 'gemini-flash-latest', name: 'Gemini Flash (Latest)', description: 'Always up-to-date high-efficiency model' },
+      { id: 'gemini-2.5-pro', name: 'Gemini 2.5 Pro', description: 'Deep emotional reflection & complex reasoning' },
+      { id: 'gemini-pro-latest', name: 'Gemini Pro (Latest)', description: 'Reliable reasoning companion' }
     ];
 
     // Combine while ensuring no duplicate IDs
@@ -435,76 +438,141 @@ app.post('/chat', async (req, res) => {
   }
 });
 
-// Schema for Creating user model
-const Users=mongoose.model('Users',{
-  name:{
-    type:String,
+// Schema for Creating user model with strict uniqueness
+const userSchema = new mongoose.Schema({
+  name: {
+    type: String,
+    trim: true,
   },
-  email:{
-    type:String,
-    unique:true,
+  email: {
+    type: String,
+    required: true,
+    unique: true,
+    trim: true,
+    lowercase: true,
+    index: true,
   },
-  password:{
-    type:String,
+  password: {
+    type: String,
   },
-  authProvider:{
-    type:String,
-    default:'local',
+  authProvider: {
+    type: String,
+    default: 'local',
+    enum: ['local', 'google'],
   },
-  providerId:{
-    type:String,
+  providerId: {
+    type: String,
+    sparse: true,
+    index: true,
   },
-  date:{
-    type:Date,
-    default:Date.now,
-  }
-})
-
-// Creating endpoint for signup
-app.post('/signup',async(req,res)=>{
-  try {
-    console.log("Signup Request:", req.body);
-    let check=await Users.findOne({email:req.body.email});
-    if(check){
-        console.log("User already exists");
-        return res.status(400).json({success:false,errors:"User Already exist!"});
-    }
-
-    const user=new Users({
-        name:req.body.username,
-        email:req.body.email,
-        password:req.body.password,
-    })
-
-    await user.save();
-    
-    const token=jwt.sign({userId:user._id},process.env.JWT_SECRET);
-    console.log("Signup Successful, token generated");
-    res.json({success:true,token});
-  } catch (err) {
-    console.error("Signup Error:", err);
-    res.status(500).json({success:false, error: "Internal Server Error during Signup"});
+  date: {
+    type: Date,
+    default: Date.now,
   }
 });
 
-//Creating endpoint for UserLogin
+const Users = mongoose.model('Users', userSchema);
 
-app.post('/login',async(req,res)=>{
+// Creating endpoint for signup with duplicate protection
+app.post('/signup', async (req, res) => {
   try {
-    console.log("Login Request:", req.body);
-    const {email,password}=req.body;
-    let user=await Users.findOne({email:req.body.email});
-    
-    if (!user || user.password !== password) {
-        console.log("Invalid credentials for:", email);
-        return res.status(401).json({ success: false, error: "Invalid credentials" });
+    const rawEmail = req.body?.email;
+    const rawUsername = req.body?.username;
+    const rawPassword = req.body?.password;
+
+    if (!rawEmail || !rawPassword) {
+      return res.status(400).json({ success: false, error: "Email and password are required." });
     }
+
+    const email = rawEmail.trim().toLowerCase();
+    const username = (rawUsername || '').trim();
+
+    // Check if user already exists (case-insensitive)
+    const existingUser = await Users.findOne({ email });
+    if (existingUser) {
+      console.log(`[Signup Blocked] Account already exists: ${email} (Provider: ${existingUser.authProvider})`);
+      if (existingUser.authProvider === 'google') {
+        return res.status(400).json({
+          success: false,
+          error: "An account with this email was registered via Google Sign-In. Please click 'Continue with Google' to sign in."
+        });
+      }
+      return res.status(400).json({
+        success: false,
+        error: "An account with this email already exists. Please sign in instead."
+      });
+    }
+
+    const user = new Users({
+      name: username || email.split('@')[0],
+      email,
+      password: rawPassword,
+      authProvider: 'local'
+    });
+
+    await user.save();
+
     const token = jwt.sign({ userId: user._id }, process.env.JWT_SECRET);
-    console.log("Login Successful for:", email);
-    res.json({ success: true, token });
+    console.log(`[Signup Successful] New user registered: ${email}`);
+    res.json({
+      success: true,
+      token,
+      user: { id: user._id, name: user.name, email: user.email, authProvider: 'local' }
+    });
+  } catch (err) {
+    if (err.code === 11000) {
+      return res.status(400).json({
+        success: false,
+        error: "An account with this email already exists. Please sign in instead."
+      });
+    }
+    console.error("Signup Error:", err);
+    res.status(500).json({ success: false, error: "Internal Server Error during Signup" });
+  }
+});
+
+// Creating endpoint for UserLogin
+app.post('/login', async (req, res) => {
+  try {
+    const rawEmail = req.body?.email;
+    const password = req.body?.password;
+
+    if (!rawEmail || !password) {
+      return res.status(400).json({ success: false, error: "Email and password are required." });
+    }
+
+    const email = rawEmail.trim().toLowerCase();
+    const user = await Users.findOne({ email });
+
+    if (!user) {
+      console.log(`[Login Failed] No account found for: ${email}`);
+      return res.status(401).json({ success: false, error: "Invalid email or password." });
+    }
+
+    // If account was created via Google and has no local password
+    if (user.authProvider === 'google' && (!user.password || user.password.startsWith('oauth_google_'))) {
+      console.log(`[Login Info] User ${email} registered via Google attempted password login`);
+      return res.status(400).json({
+        success: false,
+        error: "This account was registered using Google. Please click 'Continue with Google' to sign in."
+      });
+    }
+
+    if (user.password !== password) {
+      console.log(`[Login Failed] Invalid password for: ${email}`);
+      return res.status(401).json({ success: false, error: "Invalid email or password." });
+    }
+
+    const token = jwt.sign({ userId: user._id }, process.env.JWT_SECRET);
+    console.log(`[Login Successful] for: ${email}`);
+    res.json({
+      success: true,
+      token,
+      user: { id: user._id, name: user.name, email: user.email, authProvider: user.authProvider }
+    });
   } catch (err) {
     console.error("Login Error:", err);
-    res.status(500).json({success:false, error: "Internal Server Error during Login"});
+    res.status(500).json({ success: false, error: "Internal Server Error during Login" });
   }
 });
 
@@ -567,28 +635,46 @@ app.post('/social-login', async (req, res) => {
       return res.status(401).json({ success: false, error: "Invalid, forged, or expired Google OAuth credential" });
     }
 
-    // Lookup or create authentic user in MongoDB based strictly on verified provider data
-    let user = await Users.findOne({ email: verifiedEmail.toLowerCase() });
+    const normalizedEmail = verifiedEmail.trim().toLowerCase();
+
+    // Query for existing account by either normalized email OR Google Provider ID
+    let user = await Users.findOne({
+      $or: [
+        { email: normalizedEmail },
+        ...(verifiedId ? [{ providerId: verifiedId }] : [])
+      ]
+    });
 
     if (user) {
-      if (!user.authProvider || user.authProvider === 'local') {
-        user.authProvider = provider;
-      }
-      if (verifiedId) {
+      // Existing account found: Link Google credentials to existing account without duplicating!
+      let modified = false;
+      if (!user.providerId && verifiedId) {
         user.providerId = verifiedId;
+        modified = true;
       }
-      await user.save();
-      console.log(`Verified ${provider} user logged in:`, verifiedEmail);
+      if (user.authProvider !== 'google') {
+        user.authProvider = 'google';
+        modified = true;
+      }
+      if (!user.name && verifiedName) {
+        user.name = verifiedName;
+        modified = true;
+      }
+      if (modified) {
+        await user.save();
+      }
+      console.log(`[Social Login] Existing account linked for: ${normalizedEmail} (ID: ${user._id})`);
     } else {
+      // Brand new user: Create single unique record
       user = new Users({
         name: verifiedName,
-        email: verifiedEmail.toLowerCase(),
-        password: `oauth_${provider}_${Math.random().toString(36).slice(2)}_${Date.now()}`,
-        authProvider: provider,
+        email: normalizedEmail,
+        password: `oauth_google_${Math.random().toString(36).slice(2)}_${Date.now()}`,
+        authProvider: 'google',
         providerId: verifiedId || ''
       });
       await user.save();
-      console.log(`New verified user registered via ${provider}:`, verifiedEmail);
+      console.log(`[Social Login] New unique user created: ${normalizedEmail} (Google ID: ${verifiedId})`);
     }
 
     const jwtToken = jwt.sign({ userId: user._id }, process.env.JWT_SECRET);
@@ -603,6 +689,20 @@ app.post('/social-login', async (req, res) => {
       }
     });
   } catch (err) {
+    if (err.code === 11000) {
+      // Duplicate race condition fallback: find the existing record and log in cleanly
+      try {
+        const fallbackUser = await Users.findOne({ email: verifiedEmail.toLowerCase() });
+        if (fallbackUser) {
+          const fallbackToken = jwt.sign({ userId: fallbackUser._id }, process.env.JWT_SECRET);
+          return res.json({
+            success: true,
+            token: fallbackToken,
+            user: { id: fallbackUser._id, name: fallbackUser.name, email: fallbackUser.email }
+          });
+        }
+      } catch (_) {}
+    }
     console.error("Social Login Error:", err);
     res.status(500).json({ success: false, error: "Internal Server Error during Social OAuth" });
   }
